@@ -1,0 +1,45 @@
+/* Global kiosk styles for 1280x720 touchscreen */
+:root {
+  --bg: #1a1a2e;
+  --bg-surface: #16213e;
+  --bg-card: #0f3460;
+  --text: #e8e8e8;
+  --text-dim: #a0a0a0;
+  --accent: #4ea8de;
+  --green: #2ecc71;
+  --red: #e74c3c;
+  --yellow: #f39c12;
+  --font-mono: "SF Mono", "Cascadia Code", "Fira Code", monospace;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 18px;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  min-height: 48px;
+  min-width: 48px;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 24px;
+  touch-action: manipulation;
+}
