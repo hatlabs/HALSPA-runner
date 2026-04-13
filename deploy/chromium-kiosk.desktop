@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=HALSPA Test Runner Kiosk
+Exec=chromium-browser --kiosk --noerrdialogs --disable-translate --no-first-run --disable-infobars --disable-session-crashed-bubble http://localhost:8080
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true

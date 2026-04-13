@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+#
+# usage: ./run command [argument ...]
+#
+# Commands used during development / CI.
+# See https://death.andgravity.com/run-sh
+
+################################################################################
+# Project-specific commands follow.
+
+function install {
+  # Install all dependencies (backend + frontend).
+  uv sync --extra dev
+  cd frontend && npm install && cd ..
+}
+
+function test {
+  # Run all unit tests.
+  uv run pytest $@
+}
+
+function dev {
+  # Start the development server (backend only).
+  uv run uvicorn halspa_runner.app:app --host 0.0.0.0 --port 8080 --reload
+}
+
+function frontend-dev {
+  # Start the frontend dev server with proxy to backend.
+  cd frontend && npm run dev
+}
+
+function frontend-build {
+  # Build the frontend for production.
+  cd frontend && npm run build
+}
+
+function deploy {
+  # Install the application on the Pi.
+  deploy/install.sh
+}
+
+################################################################################
+# Project-specific commands end.
+
+set -o nounset
+set -o pipefail
+set -o errexit
+
+PROJECT_ROOT=${0%/*}
+if [[ $0 != $PROJECT_ROOT && $PROJECT_ROOT != "" ]]; then
+  cd "$PROJECT_ROOT"
+fi
+readonly PROJECT_ROOT=$(pwd)
+
+readonly SCRIPT="$PROJECT_ROOT/$(basename "$0")"
+
+function help {
+  printf "%s <task> [args]\n\nTasks:\n" "${0}"
+  compgen -A function | grep -v "^_" | cat -n
+  printf "\nExtended help:\n  Each task has comments for general usage\n"
+}
+
+TIMEFORMAT=$'\nTask completed in %3lR'
+time "${@:-help}"
