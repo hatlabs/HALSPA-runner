@@ -1,0 +1,121 @@
+"""Tests for the FastAPI app endpoints."""
+
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi.testclient import TestClient
+
+from halspa_runner import app as app_module
+from halspa_runner.app import app
+from halspa_runner.state import AppState, StateMachine
+from halspa_runner.test_discovery import Category, DUT
+
+
+@pytest.fixture
+def mock_state() -> StateMachine:
+    sm = StateMachine()
+    sm.set_ready()
+    return sm
+
+
+@pytest.fixture
+def mock_serial() -> MagicMock:
+    m = MagicMock()
+    m.sandwich_type = "HALPI2"
+    m.ui_pico_connected = True
+    m.halspa_pico_connected = True
+    return m
+
+
+@pytest.fixture
+def mock_runner() -> MagicMock:
+    m = MagicMock()
+    m.is_running = False
+    m.cancel = AsyncMock()
+    return m
+
+
+@pytest.fixture
+def client(mock_state: StateMachine, mock_serial: MagicMock, mock_runner: MagicMock):
+    # Set globals directly, bypassing lifespan
+    app_module.state_machine = mock_state
+    app_module.serial_manager = mock_serial
+    app_module.test_runner = mock_runner
+
+    # Replace lifespan with a no-op
+    @asynccontextmanager
+    async def noop_lifespan(app):
+        yield
+
+    original_router_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = noop_lifespan
+
+    with TestClient(app, raise_server_exceptions=False) as c:
+        yield c
+
+    # Restore
+    app.router.lifespan_context = original_router_lifespan
+    app_module.state_machine = None
+    app_module.serial_manager = None
+    app_module.test_runner = None
+
+
+def test_get_status(client: TestClient, mock_state: StateMachine) -> None:
+    resp = client.get("/api/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["state"] == "idle"
+    assert data["sandwich_type"] == "HALPI2"
+    assert data["ui_pico_connected"] is True
+
+
+def test_get_duts(client: TestClient) -> None:
+    mock_duts = [
+        DUT(
+            name="HALPI2",
+            path="/tmp/HALPI2-tests",
+            categories=[Category(name="000_selftest", path="/tmp/tests/000")],
+        ),
+    ]
+    with patch("halspa_runner.app.discover_duts", return_value=mock_duts):
+        resp = client.get("/api/duts")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["name"] == "HALPI2"
+    assert data[0]["categories"][0]["name"] == "000_selftest"
+
+
+def test_start_while_running(client: TestClient, mock_state: StateMachine) -> None:
+    mock_state.transition(AppState.RUNNING)
+
+    resp = client.post("/api/start", json={"dut": "HALPI2"})
+    assert resp.status_code == 409
+
+
+def test_start_unknown_dut(client: TestClient) -> None:
+    with patch("halspa_runner.app.discover_duts", return_value=[]):
+        resp = client.post("/api/start", json={"dut": "NONEXISTENT"})
+    assert resp.status_code == 404
+
+
+def test_estop_endpoint(client: TestClient, mock_state: StateMachine) -> None:
+    resp = client.post("/api/estop")
+    assert resp.status_code == 200
+    assert mock_state.state == AppState.ESTOP
+
+
+def test_clear_estop_endpoint(client: TestClient, mock_state: StateMachine) -> None:
+    mock_state.handle_estop()
+    resp = client.post("/api/clear-estop")
+    assert resp.status_code == 200
+    assert mock_state.state == AppState.IDLE
+
+
+def test_dismiss_results(client: TestClient, mock_state: StateMachine) -> None:
+    mock_state.transition(AppState.RESULTS_PASS)
+    resp = client.post("/api/dismiss")
+    assert resp.status_code == 200
+    assert mock_state.state == AppState.IDLE
