@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+.env
+uv.lock
+
+# Frontend build output
+frontend/node_modules/
+frontend/dist/
+
+# Test outputs
+test_outputs/
