@@ -14,6 +14,7 @@ class TestRunnerScreen extends LitElement {
       flex-direction: column;
       height: 100vh;
       padding: 16px 24px;
+      box-sizing: border-box;
     }
 
     header {
