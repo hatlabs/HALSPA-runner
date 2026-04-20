@@ -76,8 +76,9 @@ class AppShell extends LitElement {
     this.selectedDut = null;
     this.sandwichType = null;
     this.duts = [];
-    this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, current_test: "", elapsed: 0 };
+    this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
     this.outputLines = [];
+    this._currentTestStartIndex = 0;
     this.result = null;
     this.powerOffFailed = false;
 
@@ -125,11 +126,14 @@ class AppShell extends LitElement {
         this.selectedDut = null;
         this.outputLines = [];
         this.result = null;
-        this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, current_test: "", elapsed: 0 };
+        this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
         this._fetchDuts();
       }
     } else if (data.type === "test_output") {
       this.outputLines = [...this.outputLines, data.line];
+    } else if (data.type === "test_start") {
+      this._currentTestStartIndex = this.outputLines.length;
+      this.requestUpdate();
     } else if (data.type === "test_progress") {
       this.progress = data;
     } else if (data.type === "test_complete") {
@@ -144,9 +148,14 @@ class AppShell extends LitElement {
   _onStartTests(e) {
     const { dut, categories } = e.detail;
     this.outputLines = [];
-    this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, current_test: "", elapsed: 0 };
+    this._currentTestStartIndex = 0;
+    this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
     this.result = null;
     wsClient.send({ type: "start", dut, categories });
+  }
+
+  _onStop() {
+    wsClient.send({ type: "stop" });
   }
 
   _onBack() {
@@ -182,24 +191,18 @@ class AppShell extends LitElement {
       `;
     }
 
-    if (this.state === "results_pass" || this.state === "results_fail") {
-      return html`
-        ${this._renderDisconnected()}
-        <results-summary
-          .result=${this.result}
-          .progress=${this.progress}
-          @dismiss=${this._onDismiss}
-        ></results-summary>
-      `;
-    }
-
-    if (this.state === "running") {
+    if (this.state === "results_pass" || this.state === "results_fail" || this.state === "running") {
       return html`
         ${this._renderDisconnected()}
         <test-runner-screen
           .progress=${this.progress}
           .outputLines=${this.outputLines}
+          .currentTestStartIndex=${this._currentTestStartIndex}
           .selectedDut=${this.selectedDut}
+          .result=${this.state.startsWith("results_") ? this.result : null}
+          .finished=${this.state.startsWith("results_")}
+          @stop=${this._onStop}
+          @dismiss=${this._onDismiss}
         ></test-runner-screen>
       `;
     }
