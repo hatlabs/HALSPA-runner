@@ -7,7 +7,7 @@ from pathlib import Path
 # Directory to scan for *-tests repositories
 TEST_DIR: Path = Path(os.environ.get(
     "HALSPA_RUNNER_TEST_DIR",
-    os.path.expanduser("~/src/HALSPA"),
+    os.path.expanduser("~/halspa-runner-duts"),
 ))
 
 # FastAPI server port
