@@ -39,6 +39,43 @@ function deploy {
   deploy/install.sh
 }
 
+function pre-pr {
+  #@ Run all pre-PR checks (tests)
+  local failed=0
+
+  echo "=== Tests ==="
+  if ! uv run pytest; then
+    echo "❌ Tests failed"
+    failed=1
+  else
+    echo "✅ Tests OK"
+  fi
+
+  if [[ $failed -ne 0 ]]; then
+    echo ""
+    echo "❌ Pre-PR checks failed"
+    return 1
+  fi
+
+  echo ""
+  echo "✅ All pre-PR checks passed"
+}
+
+function pr {
+  #@ Run pre-PR checks then create a pull request
+  #@ Usage: pr [--title "title"] [--body "body"]
+  if ! pre-pr; then
+    echo ""
+    echo "Fix the issues above before creating a PR."
+    return 1
+  fi
+
+  echo ""
+  echo "=== Pushing and creating PR ==="
+  git push -u origin HEAD
+  gh pr create "$@"
+}
+
 ################################################################################
 # Project-specific commands end.
 
