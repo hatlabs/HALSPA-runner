@@ -167,8 +167,12 @@ class StateMachine:
 
     def clear_estop(self) -> None:
         """Clear e-stop state and return to idle."""
+        if self._state != AppState.ESTOP:
+            return
         self._selected_dut = None
         self._estop_power_off_failed = False
+        if self._serial:
+            self._serial.send_ui_command("BUZZER OFF")
         self.transition(AppState.IDLE)
 
     def _emergency_power_off(self) -> None:

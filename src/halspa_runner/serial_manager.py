@@ -145,8 +145,17 @@ class SerialManager:
 
         for port_info in pico_ports:
             if port_info.serial_number == _UI_PICO_SERIAL:
+                with self._lock:
+                    if self._ui_pico is not None:
+                        continue
+                    # Claim the slot to prevent races with reconnect thread
+                    self._ui_pico = True  # type: ignore[assignment]
                 self._connect_ui_pico(port_info)
             else:
+                with self._lock:
+                    if self._halspa_pico is not None:
+                        continue
+                    self._halspa_pico = True  # type: ignore[assignment]
                 self._probe_halspa_pico(port_info)
 
         if not self._ui_pico:
@@ -163,6 +172,8 @@ class SerialManager:
             ser.reset_input_buffer()
         except serial.SerialException:
             logger.warning("Failed to open UI Pico at %s", port_info.device)
+            with self._lock:
+                self._ui_pico = None
             return
 
         conn = PicoConnection(port=ser, device=port_info.device)
@@ -204,8 +215,11 @@ class SerialManager:
                     return
             # No valid ID response — not a HALSPA Pico
             ser.close()
+            with self._lock:
+                self._halspa_pico = None
         except serial.SerialException:
-            pass
+            with self._lock:
+                self._halspa_pico = None
 
     def _ui_reader_loop(self, conn: PicoConnection) -> None:
         """Read lines from UI Pico, demux events vs command responses."""
