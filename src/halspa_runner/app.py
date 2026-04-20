@@ -268,6 +268,9 @@ async def _start_test_run(
     async def on_line(line: str) -> None:
         await ws_manager.broadcast({"type": "test_output", "line": line})
 
+    async def on_test_start(nodeid: str) -> None:
+        await ws_manager.broadcast({"type": "test_start", "nodeid": nodeid})
+
     async def on_progress(progress: Any) -> None:
         await ws_manager.broadcast({
             "type": "test_progress",
@@ -282,6 +285,7 @@ async def _start_test_run(
     result = await test_runner.run(
         repo_path, categories=categories,
         on_line=on_line, on_progress=on_progress,
+        on_test_start=on_test_start,
     )
 
     if state_machine.state == AppState.ESTOP:
