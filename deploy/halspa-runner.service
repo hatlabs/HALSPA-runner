@@ -4,13 +4,12 @@ After=network.target
 
 [Service]
 Type=simple
-User=%i
 WorkingDirectory=%h/src/HALSPA/HALSPA-runner
 ExecStart=%h/.local/bin/uv run uvicorn halspa_runner.app:app --host 0.0.0.0 --port 8080
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
-Environment=HALSPA_RUNNER_TEST_DIR=%h/src/HALSPA
+Environment=HALSPA_RUNNER_TEST_DIR=%h/halspa-runner-duts
 
 [Install]
 WantedBy=default.target

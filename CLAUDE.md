@@ -45,7 +45,7 @@ All settings via environment variables:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `HALSPA_RUNNER_TEST_DIR` | `~/src/HALSPA` | Directory to scan for `*-tests` repos |
+| `HALSPA_RUNNER_TEST_DIR` | `~/halspa-runner-duts` | Directory to scan for `*-tests` repos (use symlinks) |
 | `HALSPA_RUNNER_PORT` | `8080` | FastAPI server port |
 | `HALSPA_RUNNER_SERIAL_TIMEOUT` | `2.0` | Serial command timeout (seconds) |
 | `HALSPA_RUNNER_PYTEST_TIMEOUT` | `60.0` | pytest unresponsive timeout (seconds) |
