@@ -1,10 +1,12 @@
 import { LitElement, html, css } from "lit";
+import { TouchFeedback } from "../touch-feedback.js";
 
 class TestSelection extends LitElement {
   static properties = {
     dut: { type: Object },
     runAll: { type: Boolean },
     selected: { type: Array },
+    starting: { type: Boolean },
   };
 
   static styles = css`
@@ -76,8 +78,26 @@ class TestSelection extends LitElement {
       padding: 16px;
     }
 
-    .start-btn:active {
+    .start-btn.pressed {
       opacity: 0.8;
+    }
+
+    .start-btn[disabled] {
+      background: var(--text-dim);
+    }
+
+    button {
+      transition: opacity 0.1s, transform 0.1s, background 0.15s;
+    }
+
+    button.pressed {
+      opacity: 0.7;
+      transform: scale(0.97);
+    }
+
+    button[disabled] {
+      opacity: 0.5;
+      pointer-events: none;
     }
   `;
 
@@ -86,6 +106,13 @@ class TestSelection extends LitElement {
     this.dut = null;
     this.runAll = true;
     this.selected = [];
+    this.starting = false;
+  }
+
+  willUpdate(changed) {
+    if (changed.has("dut")) {
+      this.starting = false;
+    }
   }
 
   _toggleRunAll() {
@@ -110,6 +137,9 @@ class TestSelection extends LitElement {
   }
 
   _start() {
+    if (this.starting) return;
+    this.starting = true;
+
     const categories = this.runAll
       ? null
       : this.selected.length > 0
@@ -132,13 +162,22 @@ class TestSelection extends LitElement {
 
     return html`
       <header>
-        <button class="back-btn" @click=${this._back}>&larr; Back</button>
+        <button
+          class="back-btn"
+          @pointerdown=${TouchFeedback.onPress}
+          @pointerup=${TouchFeedback.onRelease}
+          @pointerleave=${TouchFeedback.onRelease}
+          @click=${this._back}
+        >&larr; Back</button>
         <h1>${this.dut.name}</h1>
       </header>
 
       <div class="categories">
         <button
           class="cat-btn run-all ${this.runAll ? "selected" : ""}"
+          @pointerdown=${TouchFeedback.onPress}
+          @pointerup=${TouchFeedback.onRelease}
+          @pointerleave=${TouchFeedback.onRelease}
           @click=${this._toggleRunAll}
         >
           Run All
@@ -147,6 +186,9 @@ class TestSelection extends LitElement {
           (cat) => html`
             <button
               class="cat-btn ${!this.runAll && this.selected.includes(cat.name) ? "selected" : ""}"
+              @pointerdown=${TouchFeedback.onPress}
+              @pointerup=${TouchFeedback.onRelease}
+              @pointerleave=${TouchFeedback.onRelease}
               @click=${() => this._toggleCategory(cat.name)}
             >
               ${cat.name}
@@ -156,7 +198,14 @@ class TestSelection extends LitElement {
       </div>
 
       <footer>
-        <button class="start-btn" @click=${this._start}>Start Tests</button>
+        <button
+          class="start-btn"
+          ?disabled=${this.starting}
+          @pointerdown=${TouchFeedback.onPress}
+          @pointerup=${TouchFeedback.onRelease}
+          @pointerleave=${TouchFeedback.onRelease}
+          @click=${this._start}
+        >${this.starting ? "Starting…" : "Start Tests"}</button>
       </footer>
     `;
   }

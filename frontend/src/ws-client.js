@@ -54,10 +54,13 @@ class WsClient {
     };
   }
 
+  /** Send message. Returns true if sent, false if not connected. */
   send(data) {
     if (this._ws?.readyState === WebSocket.OPEN) {
       this._ws.send(JSON.stringify(data));
+      return true;
     }
+    return false;
   }
 
   _scheduleReconnect() {

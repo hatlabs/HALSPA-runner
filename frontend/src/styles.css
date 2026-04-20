@@ -42,4 +42,15 @@ button {
   border-radius: 8px;
   padding: 12px 24px;
   touch-action: manipulation;
+  transition: opacity 0.1s, transform 0.1s, background 0.15s;
+}
+
+button.pressed {
+  opacity: 0.7;
+  transform: scale(0.97);
+}
+
+button[disabled] {
+  opacity: 0.5;
+  pointer-events: none;
 }
