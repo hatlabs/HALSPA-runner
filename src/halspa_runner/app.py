@@ -123,15 +123,21 @@ async def _handle_button(event_name: str) -> None:
 
     if event_name == "BUTTON_START":
         state = state_machine.state
+        if state in (AppState.RESULTS_PASS, AppState.RESULTS_FAIL):
+            # Dismiss results and immediately re-run
+            state_machine.dismiss_results()
+            state = AppState.IDLE  # fall through to IDLE handler below
+
         if state == AppState.IDLE and serial_manager and serial_manager.sandwich_type:
-            # Start "Run All" for detected DUT
             dut_name = serial_manager.sandwich_type
             duts = discover_duts()
             matching = [d for d in duts if d.name == dut_name]
             if matching:
                 await _start_test_run(dut_name, None, matching[0].path)
-        elif state == AppState.RESULTS_PASS or state == AppState.RESULTS_FAIL:
-            state_machine.dismiss_results()
+            else:
+                logger.warning("Button press: no DUT matching sandwich type '%s'", dut_name)
+        elif state == AppState.IDLE:
+            logger.warning("Button press ignored: no sandwich type detected")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -308,4 +314,15 @@ async def _start_test_run(
 # Mount static files for frontend (if dist/ exists)
 _frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
 if _frontend_dist.is_dir():
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    class NoCacheHTMLMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            response = await call_next(request)
+            content_type = response.headers.get("content-type", "")
+            if "text/html" in content_type:
+                response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            return response
+
+    app.add_middleware(NoCacheHTMLMiddleware)
     app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True))
