@@ -1,10 +1,12 @@
 import { LitElement, html, css } from "lit";
+import { TouchFeedback } from "../touch-feedback.js";
 
 class MainMenu extends LitElement {
   static properties = {
     duts: { type: Array },
     sandwichType: { type: String },
     showShutdown: { type: Boolean },
+    shuttingDown: { type: Boolean },
   };
 
   static styles = css`
@@ -62,7 +64,7 @@ class MainMenu extends LitElement {
       transition: background 0.15s;
     }
 
-    .dut-btn:active {
+    .dut-btn.pressed {
       background: var(--accent);
     }
 
@@ -122,6 +124,20 @@ class MainMenu extends LitElement {
       background: var(--red);
       color: white;
     }
+
+    button {
+      transition: opacity 0.1s, transform 0.1s, background 0.15s;
+    }
+
+    button.pressed {
+      opacity: 0.7;
+      transform: scale(0.97);
+    }
+
+    button[disabled] {
+      opacity: 0.5;
+      pointer-events: none;
+    }
   `;
 
   constructor() {
@@ -129,6 +145,7 @@ class MainMenu extends LitElement {
     this.duts = [];
     this.sandwichType = null;
     this.showShutdown = false;
+    this.shuttingDown = false;
   }
 
   _selectDut(name) {
@@ -138,17 +155,25 @@ class MainMenu extends LitElement {
   }
 
   async _shutdown() {
-    await fetch("/api/shutdown", { method: "POST" });
-    this.showShutdown = false;
+    this.shuttingDown = true;
+    try {
+      await fetch("/api/shutdown", { method: "POST" });
+    } catch {
+      this.shuttingDown = false;
+    }
   }
 
   render() {
     return html`
       <header>
         <h1>HALSPA Test Runner</h1>
-        <button class="power-btn" @click=${() => (this.showShutdown = true)}>
-          &#x23FB;
-        </button>
+        <button
+          class="power-btn"
+          @pointerdown=${TouchFeedback.onPress}
+          @pointerup=${TouchFeedback.onRelease}
+          @pointerleave=${TouchFeedback.onRelease}
+          @click=${() => (this.showShutdown = true)}
+        >&#x23FB;</button>
       </header>
 
       ${this.duts.length === 0
@@ -159,6 +184,9 @@ class MainMenu extends LitElement {
                 (dut) => html`
                   <button
                     class="dut-btn"
+                    @pointerdown=${TouchFeedback.onPress}
+                    @pointerup=${TouchFeedback.onRelease}
+                    @pointerleave=${TouchFeedback.onRelease}
                     @click=${() => this._selectDut(dut.name)}
                   >
                     <span>${dut.name}</span>
@@ -180,12 +208,23 @@ class MainMenu extends LitElement {
                 <div class="actions">
                   <button
                     class="cancel-btn"
+                    ?disabled=${this.shuttingDown}
+                    @pointerdown=${TouchFeedback.onPress}
+                    @pointerup=${TouchFeedback.onRelease}
+                    @pointerleave=${TouchFeedback.onRelease}
                     @click=${() => (this.showShutdown = false)}
                   >
                     Cancel
                   </button>
-                  <button class="confirm-btn" @click=${this._shutdown}>
-                    Shut Down
+                  <button
+                    class="confirm-btn"
+                    ?disabled=${this.shuttingDown}
+                    @pointerdown=${TouchFeedback.onPress}
+                    @pointerup=${TouchFeedback.onRelease}
+                    @pointerleave=${TouchFeedback.onRelease}
+                    @click=${this._shutdown}
+                  >
+                    ${this.shuttingDown ? "Shutting down…" : "Shut Down"}
                   </button>
                 </div>
               </div>

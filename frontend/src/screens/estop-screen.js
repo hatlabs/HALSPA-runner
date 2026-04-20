@@ -1,8 +1,10 @@
 import { LitElement, html, css } from "lit";
+import { TouchFeedback } from "../touch-feedback.js";
 
 class EstopScreen extends LitElement {
   static properties = {
     powerOffFailed: { type: Boolean },
+    clearing: { type: Boolean },
   };
 
   static styles = css`
@@ -43,17 +45,34 @@ class EstopScreen extends LitElement {
       margin-top: 16px;
     }
 
-    .clear-btn:active {
+    .clear-btn.pressed {
       opacity: 0.8;
+    }
+
+    button {
+      transition: opacity 0.1s, transform 0.1s, background 0.15s;
+    }
+
+    button.pressed {
+      opacity: 0.7;
+      transform: scale(0.97);
+    }
+
+    button[disabled] {
+      opacity: 0.5;
+      pointer-events: none;
     }
   `;
 
   constructor() {
     super();
     this.powerOffFailed = false;
+    this.clearing = false;
   }
 
   _clear() {
+    if (this.clearing) return;
+    this.clearing = true;
     this.dispatchEvent(new CustomEvent("clear-estop"));
   }
 
@@ -68,8 +87,15 @@ class EstopScreen extends LitElement {
           </div>`
         : null}
 
-      <button class="clear-btn" @click=${this._clear}>
-        Clear &amp; Return to Menu
+      <button
+        class="clear-btn"
+        ?disabled=${this.clearing}
+        @pointerdown=${TouchFeedback.onPress}
+        @pointerup=${TouchFeedback.onRelease}
+        @pointerleave=${TouchFeedback.onRelease}
+        @click=${this._clear}
+      >
+        ${this.clearing ? "Clearing…" : "Clear & Return to Menu"}
       </button>
     `;
   }
