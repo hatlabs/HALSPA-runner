@@ -39,6 +39,10 @@ Touchscreen test runner for HALSPA hardware test jigs. FastAPI backend + Lit fro
 - `chromium-kiosk.desktop` — XDG autostart for Chromium kiosk mode
 - `install.sh` — Installation script for Pi setup
 
+### Documented Solutions (`docs/solutions/`)
+
+Past problem solutions and best practices, organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas.
+
 ## Configuration
 
 All settings via environment variables:
