@@ -86,6 +86,18 @@ class MainMenu extends LitElement {
       font-size: 1.2rem;
     }
 
+    .status-msg {
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 1.1rem;
+      margin-bottom: 12px;
+    }
+
+    .status-msg.error {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--red);
+    }
+
     .shutdown-overlay {
       position: fixed;
       inset: 0;
@@ -154,6 +166,17 @@ class MainMenu extends LitElement {
     );
   }
 
+  _renderStatusMessage() {
+    if (!this.sandwichType) {
+      return html`<div class="status-msg error">No sandwich detected</div>`;
+    }
+    const known = this.duts.some((d) => d.name === this.sandwichType);
+    if (!known) {
+      return html`<div class="status-msg error">Unknown sandwich: ${this.sandwichType}</div>`;
+    }
+    return null;
+  }
+
   async _shutdown() {
     this.shuttingDown = true;
     try {
@@ -179,12 +202,13 @@ class MainMenu extends LitElement {
       ${this.duts.length === 0
         ? html`<div class="empty">No test suites found</div>`
         : html`
+            ${this._renderStatusMessage()}
             <div class="dut-list">
               ${this.duts.map(
                 (dut) => html`
                   <button
                     class="dut-btn"
-                    ?disabled=${this.sandwichType && this.sandwichType !== dut.name}
+                    ?disabled=${this.sandwichType !== dut.name}
                     @pointerdown=${TouchFeedback.onPress}
                     @pointerup=${TouchFeedback.onRelease}
                     @pointerleave=${TouchFeedback.onRelease}
