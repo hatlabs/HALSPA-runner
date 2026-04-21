@@ -212,6 +212,7 @@ class SerialManager:
                         "HALSPA Pico found at %s, sandwich: %s",
                         port_info.device, sandwich_id,
                     )
+                    self._put_event({"type": "sandwich_detected", "sandwich_type": sandwich_id})
                     return
             # No valid ID response — not a HALSPA Pico
             ser.close()
