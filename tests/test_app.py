@@ -68,7 +68,18 @@ def test_get_status(client: TestClient, mock_state: StateMachine) -> None:
     data = resp.json()
     assert data["state"] == "idle"
     assert data["sandwich_type"] == "HALPI2"
+    assert data["selected_dut"] is None
     assert data["ui_pico_connected"] is True
+
+
+def test_get_status_with_selected_dut(
+    client: TestClient, mock_state: StateMachine,
+) -> None:
+    mock_state.select_dut("HALPI2")
+    resp = client.get("/api/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["selected_dut"] == "HALPI2"
 
 
 def test_get_duts(client: TestClient) -> None:
@@ -179,3 +190,21 @@ def test_websocket_initial_message_sandwich_type_none(
     with client.websocket_connect("/ws") as ws:
         data = ws.receive_json()
         assert data["sandwich_type"] is None
+
+
+def test_websocket_initial_message_includes_selected_dut(
+    client: TestClient, mock_state: StateMachine,
+) -> None:
+    with client.websocket_connect("/ws") as ws:
+        data = ws.receive_json()
+        assert data["type"] == "state_change"
+        assert data["selected_dut"] is None
+
+
+def test_websocket_initial_message_selected_dut_after_selection(
+    client: TestClient, mock_state: StateMachine,
+) -> None:
+    mock_state.select_dut("HALPI2")
+    with client.websocket_connect("/ws") as ws:
+        data = ws.receive_json()
+        assert data["selected_dut"] == "HALPI2"

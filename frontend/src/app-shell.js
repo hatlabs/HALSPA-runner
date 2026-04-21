@@ -82,6 +82,7 @@ class AppShell extends LitElement {
     this.result = null;
     this.powerOffFailed = false;
     this._hasAutoSelected = false;
+    this._dutsLoaded = false;
 
     this._boundOnMessage = this._onMessage.bind(this);
     this._boundOnConnected = () => {
@@ -110,9 +111,11 @@ class AppShell extends LitElement {
     try {
       const resp = await fetch("/api/duts");
       this.duts = await resp.json();
-    } catch {
+    } catch (err) {
+      console.error("Failed to fetch DUTs:", err);
       this.duts = [];
     }
+    this._dutsLoaded = true;
     this._tryAutoSelectSandwich();
   }
 
@@ -131,8 +134,12 @@ class AppShell extends LitElement {
 
     if (data.type === "state_change") {
       this.state = data.state;
+      if (data.selected_dut !== undefined) {
+        this.selectedDut = data.selected_dut;
+      }
       if (data.sandwich_type !== undefined) {
         this.sandwichType = data.sandwich_type;
+        this._tryAutoSelectSandwich();
       }
       if (data.state === "estop") {
         this.powerOffFailed = data.power_off_failed || false;
@@ -142,6 +149,8 @@ class AppShell extends LitElement {
         this.outputLines = [];
         this.result = null;
         this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
+        this._hasAutoSelected = false;
+        this._dutsLoaded = false;
         this._fetchDuts();
       } else if (data.state === "dut_selected") {
         this.outputLines = [];
@@ -234,10 +243,10 @@ class AppShell extends LitElement {
 
     if (this.selectedDut) {
       const dut = this.duts.find((d) => d.name === this.selectedDut);
-      if (!dut) {
+      if (!dut && this._dutsLoaded) {
         // DUT no longer available (removed between runs) — fall back to menu
         this.selectedDut = null;
-      } else {
+      } else if (dut) {
         return html`
           ${this._renderDisconnected()}
           <test-selection

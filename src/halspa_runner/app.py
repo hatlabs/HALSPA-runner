@@ -80,6 +80,7 @@ async def lifespan(app: FastAPI):
             "state": new.value,
             "old_state": old.value,
             "sandwich_type": serial_manager.sandwich_type if serial_manager else None,
+            "selected_dut": state_machine.selected_dut if state_machine else None,
         }
         if new == AppState.ESTOP and state_machine:
             msg["power_off_failed"] = state_machine.estop_power_off_failed
@@ -273,6 +274,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         "state": state_machine.state.value,
         "old_state": None,
         "sandwich_type": serial_manager.sandwich_type if serial_manager else None,
+        "selected_dut": state_machine.selected_dut if state_machine else None,
     })
 
     try:
