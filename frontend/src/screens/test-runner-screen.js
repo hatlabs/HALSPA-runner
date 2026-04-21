@@ -144,6 +144,8 @@ class TestRunnerScreen extends LitElement {
       line-height: 1.4;
       color: #c9d1d9;
       scrollbar-width: auto;
+      -webkit-user-select: text;
+      user-select: text;
     }
 
     .log::-webkit-scrollbar {
