@@ -142,7 +142,7 @@ class PytestRunner:
     ) -> RunResult:
         uv = _find_uv()
         args = [uv, "run", "pytest", "-p", "halspa_runner.pytest_reporter", "-s"]
-        if targets:
+        if targets is not None:
             args.extend(targets)
         elif categories:
             args.extend(f"tests/{cat}" for cat in categories)

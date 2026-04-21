@@ -2,7 +2,9 @@
 
 from pathlib import Path
 
-from halspa_runner.test_discovery import DUT, Category, discover_duts
+import pytest
+
+from halspa_runner.test_discovery import DUT, Category, browse_test_path, discover_duts
 
 
 def _make_test_repo(tmp_path: Path, name: str, categories: list[str]) -> Path:
@@ -108,3 +110,99 @@ def test_categories_sorted_by_name(tmp_path: Path) -> None:
 
     names = [c.name for c in duts[0].categories]
     assert names == ["000_selftest", "100_power", "200_controller", "300_canbus"]
+
+
+# --- browse_test_path tests ---
+
+
+def _make_browse_repo(tmp_path: Path) -> Path:
+    """Create a repo with tests/ structure for browse_test_path tests."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    return repo
+
+
+@pytest.mark.asyncio
+async def test_browse_root_returns_categories(tmp_path: Path) -> None:
+    repo = _make_browse_repo(tmp_path)
+    tests_dir = repo / "tests"
+    (tests_dir / "100_power").mkdir(parents=True)
+    (tests_dir / "100_power" / "test_rails.py").touch()
+    (tests_dir / "200_thermal").mkdir()
+    (tests_dir / "200_thermal" / "test_temp.py").touch()
+
+    entries = await browse_test_path(repo, "")
+
+    names = [e.name for e in entries]
+    assert "100_power" in names
+    assert "200_thermal" in names
+    assert all(e.type == "directory" for e in entries)
+
+
+@pytest.mark.asyncio
+async def test_browse_subdirectory_returns_files(tmp_path: Path) -> None:
+    repo = _make_browse_repo(tmp_path)
+    power_dir = repo / "tests" / "100_power"
+    power_dir.mkdir(parents=True)
+    (power_dir / "test_rails.py").touch()
+
+    entries = await browse_test_path(repo, "tests/100_power")
+
+    assert len(entries) == 1
+    assert entries[0].name == "test_rails.py"
+    assert entries[0].type == "file"
+
+
+@pytest.mark.asyncio
+async def test_browse_rejects_path_traversal(tmp_path: Path) -> None:
+    repo = _make_browse_repo(tmp_path)
+    (repo / "tests").mkdir()
+
+    with pytest.raises(ValueError, match="traversal"):
+        await browse_test_path(repo, "..")
+
+
+@pytest.mark.asyncio
+async def test_browse_rejects_path_escape(tmp_path: Path) -> None:
+    repo = _make_browse_repo(tmp_path)
+    (repo / "tests").mkdir()
+
+    # A path that resolves outside the tests/ directory
+    with pytest.raises(ValueError):
+        await browse_test_path(repo, "src/something")
+
+
+@pytest.mark.asyncio
+async def test_browse_nonexistent_path(tmp_path: Path) -> None:
+    repo = _make_browse_repo(tmp_path)
+    (repo / "tests").mkdir()
+
+    with pytest.raises(ValueError, match="not found"):
+        await browse_test_path(repo, "tests/nonexistent")
+
+
+@pytest.mark.asyncio
+async def test_browse_empty_directory(tmp_path: Path) -> None:
+    repo = _make_browse_repo(tmp_path)
+    power_dir = repo / "tests" / "100_power"
+    power_dir.mkdir(parents=True)
+    (power_dir / "__pycache__").mkdir()
+
+    entries = await browse_test_path(repo, "tests/100_power")
+
+    assert entries == []
+
+
+@pytest.mark.asyncio
+async def test_browse_skips_conftest(tmp_path: Path) -> None:
+    repo = _make_browse_repo(tmp_path)
+    power_dir = repo / "tests" / "100_power"
+    power_dir.mkdir(parents=True)
+    (power_dir / "conftest.py").touch()
+    (power_dir / "test_foo.py").touch()
+
+    entries = await browse_test_path(repo, "tests/100_power")
+
+    names = [e.name for e in entries]
+    assert "test_foo.py" in names
+    assert "conftest.py" not in names

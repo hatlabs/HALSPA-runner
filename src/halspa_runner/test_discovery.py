@@ -153,7 +153,13 @@ def _browse_directory(repo_path: Path, directory: Path) -> list[BrowseEntry]:
     entries: list[BrowseEntry] = []
     tests_dir = repo_path / "tests"
 
-    for item in sorted(directory.iterdir()):
+    try:
+        items = sorted(directory.iterdir())
+    except OSError as e:
+        logger.warning("Cannot list directory %s: %s", directory, e)
+        return []
+
+    for item in items:
         if item.name in _SKIP_NAMES:
             continue
 
@@ -171,11 +177,14 @@ def _browse_directory(repo_path: Path, directory: Path) -> list[BrowseEntry]:
 
 def _dir_has_tests(directory: Path) -> bool:
     """Check if a directory or its descendants contain test files."""
-    for root, dirs, files in os.walk(directory):
-        dirs[:] = [d for d in dirs if d not in _SKIP_NAMES]
-        for f in files:
-            if _is_test_file(f):
-                return True
+    try:
+        for root, dirs, files in os.walk(directory):
+            dirs[:] = [d for d in dirs if d not in _SKIP_NAMES]
+            for f in files:
+                if _is_test_file(f):
+                    return True
+    except OSError as e:
+        logger.warning("Cannot walk directory %s: %s", directory, e)
     return False
 
 

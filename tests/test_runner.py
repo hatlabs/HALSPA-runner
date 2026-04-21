@@ -375,3 +375,40 @@ async def test_test_start_callback(runner: PytestRunner, tmp_path: Path) -> None
         await runner.run(tmp_path, on_test_start=on_test_start)
 
     assert started == ["tests/test_a.py::test_one", "tests/test_b.py::test_two"]
+
+
+@pytest.mark.asyncio
+async def test_targets_passed_to_pytest(runner: PytestRunner, tmp_path: Path) -> None:
+    report_path = str(tmp_path / "report.jsonl")
+    _, patches = _setup_mock([], exit_code=0, report_path=report_path, report_events=[])
+
+    with patches as ctx:
+        await runner.run(
+            tmp_path,
+            targets=["tests/100_power/test_rails.py", "tests/200_thermal/test_temp.py::test_one"],
+        )
+
+    args = ctx.mock_exec.call_args[0]
+    assert "tests/100_power/test_rails.py" in args
+    assert "tests/200_thermal/test_temp.py::test_one" in args
+    # No "tests/" prefix added — targets passed directly
+    assert "tests/tests/" not in " ".join(str(a) for a in args)
+
+
+@pytest.mark.asyncio
+async def test_targets_takes_precedence_over_categories(runner: PytestRunner, tmp_path: Path) -> None:
+    report_path = str(tmp_path / "report.jsonl")
+    _, patches = _setup_mock([], exit_code=0, report_path=report_path, report_events=[])
+
+    with patches as ctx:
+        await runner.run(
+            tmp_path,
+            categories=["000_selftest", "100_power"],
+            targets=["tests/200_thermal/test_temp.py"],
+        )
+
+    args = list(ctx.mock_exec.call_args[0])
+    # targets should be used, not categories
+    assert "tests/200_thermal/test_temp.py" in args
+    assert "tests/000_selftest" not in args
+    assert "tests/100_power" not in args

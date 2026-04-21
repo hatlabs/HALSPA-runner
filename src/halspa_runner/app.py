@@ -185,6 +185,9 @@ async def browse_dut(dut_name: str, path: str = "") -> JSONResponse:
         entries = await browse_test_path(matching[0].path, path)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+    except OSError as e:
+        logger.warning("Browse failed for %s path=%s: %s", dut_name, path, e)
+        return JSONResponse({"error": "Could not browse path"}, status_code=500)
 
     # Build breadcrumbs from the path
     breadcrumbs: list[dict[str, str]] = []
@@ -323,6 +326,12 @@ async def _start_test_run() -> None:
 
     if not repo_path:
         logger.error("Cannot start test run: no repo path in state machine")
+        await ws_manager.broadcast({
+            "type": "test_complete",
+            "status": "error",
+            "exit_code": None,
+            "passed": 0, "failed": 0, "skipped": 0, "elapsed": 0,
+        })
         return
 
     state_machine.start_running()
