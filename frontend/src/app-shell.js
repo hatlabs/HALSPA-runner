@@ -83,6 +83,7 @@ class AppShell extends LitElement {
     this.powerOffFailed = false;
     this._hasAutoSelected = false;
     this._dutsLoaded = false;
+    this._browsePath = "";
 
     this._boundOnMessage = this._onMessage.bind(this);
     this._boundOnConnected = () => {
@@ -146,6 +147,7 @@ class AppShell extends LitElement {
       }
       if (data.state === "idle") {
         this.selectedDut = null;
+        this._browsePath = "";
         this.outputLines = [];
         this.result = null;
         this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
@@ -186,6 +188,10 @@ class AppShell extends LitElement {
 
   _onSelectTargets(e) {
     wsClient.send({ type: "select", targets: e.detail.targets });
+  }
+
+  _onBrowse(e) {
+    this._browsePath = e.detail.path;
   }
 
   _onStop() {
@@ -251,8 +257,10 @@ class AppShell extends LitElement {
           ${this._renderDisconnected()}
           <test-selection
             .dut=${dut}
+            .initialPath=${this._browsePath}
             @start-tests=${this._onStartTests}
             @select-targets=${this._onSelectTargets}
+            @browse=${this._onBrowse}
             @back=${this._onBack}
           ></test-selection>
         `;
