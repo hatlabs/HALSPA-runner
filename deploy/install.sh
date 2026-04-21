@@ -32,7 +32,7 @@ sed "s|%h|$HOME|g; s|%i|$(whoami)|g" deploy/halspa-runner.service \
 
 systemctl --user daemon-reload
 systemctl --user enable halspa-runner.service
-systemctl --user start halspa-runner.service
+systemctl --user restart halspa-runner.service
 
 echo "=== Installing Chromium kiosk autostart ==="
 mkdir -p "$HOME/.config/autostart"
