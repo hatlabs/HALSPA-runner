@@ -81,6 +81,7 @@ class AppShell extends LitElement {
     this._currentTestStartIndex = 0;
     this.result = null;
     this.powerOffFailed = false;
+    this._hasAutoSelected = false;
 
     this._boundOnMessage = this._onMessage.bind(this);
     this._boundOnConnected = () => {
@@ -112,6 +113,17 @@ class AppShell extends LitElement {
     } catch {
       this.duts = [];
     }
+    this._tryAutoSelectSandwich();
+  }
+
+  _tryAutoSelectSandwich() {
+    if (this._hasAutoSelected || !this.sandwichType || this.selectedDut) return;
+    if (this.state !== "idle") return;
+    const match = this.duts.find((d) => d.name === this.sandwichType);
+    if (match) {
+      this._hasAutoSelected = true;
+      this._onSelectDut({ detail: { dut: match.name } });
+    }
   }
 
   _onMessage(e) {
@@ -119,6 +131,9 @@ class AppShell extends LitElement {
 
     if (data.type === "state_change") {
       this.state = data.state;
+      if (data.sandwich_type !== undefined) {
+        this.sandwichType = data.sandwich_type;
+      }
       if (data.state === "estop") {
         this.powerOffFailed = data.power_off_failed || false;
       }

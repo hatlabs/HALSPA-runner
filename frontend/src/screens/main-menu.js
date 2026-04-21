@@ -184,6 +184,7 @@ class MainMenu extends LitElement {
                 (dut) => html`
                   <button
                     class="dut-btn"
+                    ?disabled=${this.sandwichType && this.sandwichType !== dut.name}
                     @pointerdown=${TouchFeedback.onPress}
                     @pointerup=${TouchFeedback.onRelease}
                     @pointerleave=${TouchFeedback.onRelease}
