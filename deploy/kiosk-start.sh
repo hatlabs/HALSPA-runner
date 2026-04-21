@@ -12,4 +12,5 @@ exec chromium-browser \
     --ozone-platform=wayland \
     --touch-events=enabled \
     --enable-features=TouchpadOverscrollHistoryNavigation \
+    --remote-debugging-port=9222 \
     http://localhost:8080
