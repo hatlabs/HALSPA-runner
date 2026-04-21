@@ -52,4 +52,4 @@ CLAUDE.md              Architecture, API reference, configuration
 
 ## License
 
-MIT
+GPL-3.0-or-later. See [LICENSE](LICENSE).
