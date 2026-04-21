@@ -353,6 +353,7 @@ async def _start_test_run() -> None:
             "failed": progress.failed,
             "skipped": progress.skipped,
             "errors": progress.errors,
+            "total": progress.total,
             "current_test": progress.current_test,
             "elapsed": round(progress.elapsed, 1),
         })
