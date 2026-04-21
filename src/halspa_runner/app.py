@@ -115,6 +115,14 @@ async def _consume_events() -> None:
             await _handle_button(event["event"])
         elif event.get("type") == "ui_pico_disconnected":
             await ws_manager.broadcast({"type": "ui_pico_disconnected"})
+        elif event.get("type") == "sandwich_detected":
+            await ws_manager.broadcast({
+                "type": "state_change",
+                "state": state_machine.state.value,
+                "old_state": state_machine.state.value,
+                "sandwich_type": event["sandwich_type"],
+                "selected_dut": state_machine.selected_dut if state_machine else None,
+            })
 
 
 async def _handle_button(event_name: str) -> None:

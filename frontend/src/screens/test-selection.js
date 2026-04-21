@@ -4,6 +4,7 @@ import { TouchFeedback } from "../touch-feedback.js";
 class TestSelection extends LitElement {
   static properties = {
     dut: { type: Object },
+    initialPath: { type: String },
     currentPath: { type: String },
     entries: { type: Array },
     breadcrumbs: { type: Array },
@@ -257,6 +258,7 @@ class TestSelection extends LitElement {
   constructor() {
     super();
     this.dut = null;
+    this.initialPath = "";
     this.currentPath = "";
     this.entries = [];
     this.breadcrumbs = [];
@@ -269,12 +271,13 @@ class TestSelection extends LitElement {
 
   willUpdate(changed) {
     if (changed.has("dut") && this.dut) {
-      this.currentPath = "";
+      this.currentPath = this.initialPath || "";
       this.starting = false;
       this._fetchEntries();
     }
     if (changed.has("currentPath") && !changed.has("dut")) {
       this._fetchEntries();
+      this.dispatchEvent(new CustomEvent("browse", { detail: { path: this.currentPath } }));
     }
   }
 
