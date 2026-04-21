@@ -352,10 +352,14 @@ class TestSelection extends LitElement {
     }
   }
 
+  _currentTargets() {
+    if (!this.runAll) return [...this.selected];
+    return this.currentPath ? [this.currentPath] : null;
+  }
+
   _syncTargets() {
-    const targets = this.runAll ? null : [...this.selected];
     this.dispatchEvent(
-      new CustomEvent("select-targets", { detail: { targets } })
+      new CustomEvent("select-targets", { detail: { targets: this._currentTargets() } })
     );
   }
 
@@ -363,10 +367,9 @@ class TestSelection extends LitElement {
     if (this.starting) return;
     this.starting = true;
 
-    const targets = this.runAll ? null : [...this.selected];
     this.dispatchEvent(
       new CustomEvent("start-tests", {
-        detail: { dut: this.dut.name, targets },
+        detail: { dut: this.dut.name, targets: this._currentTargets() },
       })
     );
   }
