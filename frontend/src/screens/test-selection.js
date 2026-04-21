@@ -308,10 +308,9 @@ class TestSelection extends LitElement {
   }
 
   _toggleRunAll() {
-    this.runAll = !this.runAll;
-    if (this.runAll) {
-      this.selected = new Set();
-    }
+    if (this.runAll) return;
+    this.runAll = true;
+    this.selected = new Set();
     this._syncTargets();
   }
 

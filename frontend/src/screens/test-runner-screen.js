@@ -116,7 +116,8 @@ class TestRunnerScreen extends LitElement {
 
     .current-test {
       color: var(--text-dim);
-      font-size: 0.9rem;
+      font-size: 1.1rem;
+      font-family: var(--font-mono);
       margin-bottom: 8px;
       white-space: nowrap;
       overflow: hidden;
@@ -142,6 +143,22 @@ class TestRunnerScreen extends LitElement {
       font-size: 14px;
       line-height: 1.4;
       color: #c9d1d9;
+      scrollbar-width: auto;
+    }
+
+    .log::-webkit-scrollbar {
+      width: 20px;
+    }
+
+    .log::-webkit-scrollbar-track {
+      background: #161b22;
+      border-radius: 4px;
+    }
+
+    .log::-webkit-scrollbar-thumb {
+      background: #444c56;
+      border-radius: 4px;
+      border: 4px solid #161b22;
     }
 
     .log-line {
