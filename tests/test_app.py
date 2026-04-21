@@ -1,6 +1,7 @@
 """Tests for the FastAPI app endpoints."""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,7 +10,7 @@ from fastapi.testclient import TestClient
 from halspa_runner import app as app_module
 from halspa_runner.app import app
 from halspa_runner.state import AppState, StateMachine
-from halspa_runner.test_discovery import Category, DUT
+from halspa_runner.test_discovery import Category, DUT, discover_duts
 
 
 @pytest.fixture
@@ -118,4 +119,45 @@ def test_dismiss_results(client: TestClient, mock_state: StateMachine) -> None:
     mock_state.transition(AppState.RESULTS_PASS)
     resp = client.post("/api/dismiss")
     assert resp.status_code == 200
-    assert mock_state.state == AppState.IDLE
+    assert mock_state.state == AppState.DUT_SELECTED
+
+
+def test_browse_root(client: TestClient, tmp_path: Path) -> None:
+    # Create a DUT with test directories on the filesystem
+    repo = tmp_path / "HALPI2-tests"
+    tests_dir = repo / "tests"
+    power_dir = tests_dir / "100_power"
+    power_dir.mkdir(parents=True)
+    (power_dir / "test_rails.py").touch()
+
+    mock_dut = DUT(name="HALPI2", path=repo, categories=[Category(name="100_power", path=power_dir)])
+
+    with patch("halspa_runner.app.discover_duts", return_value=[mock_dut]):
+        resp = client.get("/api/duts/HALPI2/browse")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["breadcrumbs"] == []
+    assert len(data["entries"]) >= 1
+    names = [e["name"] for e in data["entries"]]
+    assert "100_power" in names
+
+
+def test_browse_dut_not_found(client: TestClient) -> None:
+    with patch("halspa_runner.app.discover_duts", return_value=[]):
+        resp = client.get("/api/duts/NONEXISTENT/browse")
+
+    assert resp.status_code == 404
+
+
+def test_browse_invalid_path(client: TestClient, tmp_path: Path) -> None:
+    repo = tmp_path / "HALPI2-tests"
+    tests_dir = repo / "tests"
+    tests_dir.mkdir(parents=True)
+
+    mock_dut = DUT(name="HALPI2", path=repo, categories=[])
+
+    with patch("halspa_runner.app.discover_duts", return_value=[mock_dut]):
+        resp = client.get("/api/duts/HALPI2/browse", params={"path": "../../etc"})
+
+    assert resp.status_code == 400

@@ -2,6 +2,7 @@
 
 import logging
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -50,6 +51,8 @@ class StateMachine:
         self._runner = test_runner
         self._on_state_change: list[Any] = []
         self._selected_dut: str | None = None
+        self._selected_repo_path: Path | None = None
+        self._selected_targets: list[str] | None = None
         self._power_control_available = False
         self._estop_power_off_failed = False
 
@@ -67,6 +70,14 @@ class StateMachine:
     @property
     def selected_dut(self) -> str | None:
         return self._selected_dut
+
+    @property
+    def selected_repo_path(self) -> Path | None:
+        return self._selected_repo_path
+
+    @property
+    def selected_targets(self) -> list[str] | None:
+        return self._selected_targets
 
     @property
     def estop_power_off_failed(self) -> bool:
@@ -102,10 +113,24 @@ class StateMachine:
         """Called when all subsystems are initialized."""
         self.transition(AppState.IDLE)
 
-    def select_dut(self, dut_name: str) -> None:
+    def select_dut(self, dut_name: str, repo_path: Path | None = None) -> None:
         """Select a DUT for testing."""
         self._selected_dut = dut_name
+        if repo_path is not None:
+            self._selected_repo_path = repo_path
+        self._selected_targets = None
         self.transition(AppState.DUT_SELECTED)
+
+    def set_targets(self, targets: list[str] | None) -> None:
+        """Update the selected test targets (synced from frontend)."""
+        self._selected_targets = targets
+
+    def deselect_dut(self) -> None:
+        """Clear DUT selection and return to idle (back to main menu)."""
+        self._selected_dut = None
+        self._selected_repo_path = None
+        self._selected_targets = None
+        self.transition(AppState.IDLE)
 
     def start_running(self) -> None:
         """Transition to RUNNING when tests begin."""
@@ -125,9 +150,8 @@ class StateMachine:
                 self._serial.send_ui_command("BUZZER FAIL")
 
     def dismiss_results(self) -> None:
-        """Return to idle after viewing results."""
-        self._selected_dut = None
-        self.transition(AppState.IDLE)
+        """Dismiss results, preserving DUT and targets for re-run."""
+        self.transition(AppState.DUT_SELECTED)
 
     def handle_estop(self, runner_cancel_coro: Any = None) -> None:
         """Handle e-stop: kill tests, disable power. Thread-safe.
@@ -170,6 +194,8 @@ class StateMachine:
         if self._state != AppState.ESTOP:
             return
         self._selected_dut = None
+        self._selected_repo_path = None
+        self._selected_targets = None
         self._estop_power_off_failed = False
         if self._serial:
             self._serial.send_ui_command("BUZZER OFF")

@@ -87,6 +87,7 @@ class PytestRunner:
         self,
         repo_path: Path,
         categories: list[str] | None = None,
+        targets: list[str] | None = None,
         on_line: Any = None,
         on_progress: Any = None,
         on_test_start: Any = None,
@@ -97,6 +98,8 @@ class PytestRunner:
             repo_path: Path to the *-tests repository root.
             categories: List of test category directory names to run.
                         If None or empty, runs all tests.
+            targets: List of pytest-compatible paths/nodeids to run.
+                     Mutually exclusive with categories. Takes precedence.
             on_line: Async callback called with each output line (str).
             on_progress: Async callback called with RunProgress on each update.
             on_test_start: Async callback called with nodeid when a test starts.
@@ -114,7 +117,7 @@ class PytestRunner:
 
         try:
             result = await self._run_with_report(
-                repo_path, report_path, categories, progress,
+                repo_path, report_path, categories, targets, progress,
                 on_line, on_progress, on_test_start,
             )
         finally:
@@ -131,6 +134,7 @@ class PytestRunner:
         repo_path: Path,
         report_path: str,
         categories: list[str] | None,
+        targets: list[str] | None,
         progress: RunProgress,
         on_line: Any,
         on_progress: Any,
@@ -138,7 +142,9 @@ class PytestRunner:
     ) -> RunResult:
         uv = _find_uv()
         args = [uv, "run", "pytest", "-p", "halspa_runner.pytest_reporter", "-s"]
-        if categories:
+        if targets is not None:
+            args.extend(targets)
+        elif categories:
             args.extend(f"tests/{cat}" for cat in categories)
 
         # Set up environment: JSONL report path and PYTHONPATH for the plugin

@@ -1,5 +1,6 @@
 """Tests for the application state machine."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -52,6 +53,10 @@ def test_full_pass_flow(sm: StateMachine, serial: MagicMock) -> None:
     serial.send_ui_command.assert_any_call("BUZZER PASS")
 
     sm.dismiss_results()
+    assert sm.state == AppState.DUT_SELECTED
+    assert sm.selected_dut == "HALPI2"
+
+    sm.deselect_dut()
     assert sm.state == AppState.IDLE
     assert sm.selected_dut is None
 
@@ -121,3 +126,50 @@ def test_no_serial_manager(runner: MagicMock) -> None:
     sm.start_running()
     sm.tests_completed(passed=True)
     assert sm.state == AppState.RESULTS_PASS
+
+
+def test_set_targets(sm: StateMachine) -> None:
+    sm.set_ready()
+    sm.select_dut("HALPI2", Path("/tmp/HALPI2-tests"))
+
+    sm.set_targets(["tests/100_power/test_rails.py"])
+
+    assert sm.selected_targets == ["tests/100_power/test_rails.py"]
+
+
+def test_deselect_dut_clears_all(sm: StateMachine) -> None:
+    sm.set_ready()
+    sm.select_dut("HALPI2", Path("/tmp/HALPI2-tests"))
+    sm.set_targets(["tests/100_power"])
+
+    sm.deselect_dut()
+
+    assert sm.selected_dut is None
+    assert sm.selected_repo_path is None
+    assert sm.selected_targets is None
+    assert sm.state == AppState.IDLE
+
+
+def test_dismiss_preserves_dut_and_targets(sm: StateMachine) -> None:
+    sm.set_ready()
+    sm.select_dut("HALPI2", Path("/tmp/HALPI2-tests"))
+    sm.set_targets(["tests/100_power"])
+    sm.start_running()
+    sm.tests_completed(passed=True)
+
+    sm.dismiss_results()
+
+    assert sm.selected_dut == "HALPI2"
+    assert sm.selected_targets == ["tests/100_power"]
+    assert sm.state == AppState.DUT_SELECTED
+
+
+def test_select_dut_stores_repo_path(sm: StateMachine) -> None:
+    sm.set_ready()
+    repo = Path("/tmp/HALPI2-tests")
+
+    sm.select_dut("HALPI2", repo)
+
+    assert sm.selected_repo_path == repo
+    assert sm.selected_dut == "HALPI2"
+    assert sm.state == AppState.DUT_SELECTED
