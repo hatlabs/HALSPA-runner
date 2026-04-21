@@ -33,6 +33,10 @@ Touchscreen test runner for HALSPA hardware test jigs. FastAPI backend + Lit fro
 - `screens/results-summary.js` — Pass/fail summary
 - `screens/estop-screen.js` — E-stop overlay
 
+### Documented Solutions (`docs/solutions/`)
+
+Past problem solutions and best practices, organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas.
+
 ### Deployment (`deploy/`)
 
 - `halspa-runner.service` — systemd user service for the backend

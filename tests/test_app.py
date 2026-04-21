@@ -161,3 +161,21 @@ def test_browse_invalid_path(client: TestClient, tmp_path: Path) -> None:
         resp = client.get("/api/duts/HALPI2/browse", params={"path": "../../etc"})
 
     assert resp.status_code == 400
+
+
+def test_websocket_initial_message_includes_sandwich_type(
+    client: TestClient, mock_serial: MagicMock,
+) -> None:
+    with client.websocket_connect("/ws") as ws:
+        data = ws.receive_json()
+        assert data["type"] == "state_change"
+        assert data["sandwich_type"] == "HALPI2"
+
+
+def test_websocket_initial_message_sandwich_type_none(
+    client: TestClient, mock_serial: MagicMock,
+) -> None:
+    mock_serial.sandwich_type = None
+    with client.websocket_connect("/ws") as ws:
+        data = ws.receive_json()
+        assert data["sandwich_type"] is None
