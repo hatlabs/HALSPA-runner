@@ -13,8 +13,6 @@ class AppShell extends LitElement {
     selectedDut: { type: String },
     sandwichType: { type: String },
     duts: { type: Array },
-    selectedCategories: { type: Array },
-    runAll: { type: Boolean },
     progress: { type: Object },
     outputLines: { type: Array },
     result: { type: Object },
@@ -78,8 +76,6 @@ class AppShell extends LitElement {
     this.selectedDut = null;
     this.sandwichType = null;
     this.duts = [];
-    this.selectedCategories = [];
-    this.runAll = true;
     this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
     this.outputLines = [];
     this._currentTestStartIndex = 0;
@@ -127,6 +123,12 @@ class AppShell extends LitElement {
         this.powerOffFailed = data.power_off_failed || false;
       }
       if (data.state === "idle") {
+        this.selectedDut = null;
+        this.outputLines = [];
+        this.result = null;
+        this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
+        this._fetchDuts();
+      } else if (data.state === "dut_selected") {
         this.outputLines = [];
         this.result = null;
         this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
@@ -146,17 +148,20 @@ class AppShell extends LitElement {
 
   _onSelectDut(e) {
     this.selectedDut = e.detail.dut;
+    wsClient.send({ type: "select_dut", dut: e.detail.dut });
   }
 
   _onStartTests(e) {
-    const { dut, categories } = e.detail;
-    this.selectedCategories = categories || [];
-    this.runAll = categories === null;
+    const { dut, targets } = e.detail;
     this.outputLines = [];
     this._currentTestStartIndex = 0;
     this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
     this.result = null;
-    wsClient.send({ type: "start", dut, categories });
+    wsClient.send({ type: "start", dut, targets });
+  }
+
+  _onSelectTargets(e) {
+    wsClient.send({ type: "select", targets: e.detail.targets });
   }
 
   _onStop() {
@@ -165,9 +170,7 @@ class AppShell extends LitElement {
 
   _onBack() {
     this.selectedDut = null;
-    this.selectedCategories = [];
-    this.runAll = true;
-    wsClient.send({ type: "dismiss" });
+    wsClient.send({ type: "deselect" });
   }
 
   _onDismiss() {
@@ -219,20 +222,13 @@ class AppShell extends LitElement {
       if (!dut) {
         // DUT no longer available (removed between runs) — fall back to menu
         this.selectedDut = null;
-        this.selectedCategories = [];
-        this.runAll = true;
       } else {
-        // Filter out stale categories that no longer exist in the DUT
-        const validNames = new Set((dut.categories || []).map((c) => c.name));
-        const selected = this.selectedCategories.filter((c) => validNames.has(c));
-        const runAll = this.runAll || selected.length === 0;
         return html`
           ${this._renderDisconnected()}
           <test-selection
             .dut=${dut}
-            .runAll=${runAll}
-            .selected=${selected}
             @start-tests=${this._onStartTests}
+            @select-targets=${this._onSelectTargets}
             @back=${this._onBack}
           ></test-selection>
         `;

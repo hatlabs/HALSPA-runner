@@ -4,8 +4,13 @@ import { TouchFeedback } from "../touch-feedback.js";
 class TestSelection extends LitElement {
   static properties = {
     dut: { type: Object },
+    currentPath: { type: String },
+    entries: { type: Array },
+    breadcrumbs: { type: Array },
+    loading: { type: Boolean },
+    error: { type: String },
     runAll: { type: Boolean },
-    selected: { type: Array },
+    selected: { type: Object },
     starting: { type: Boolean },
   };
 
@@ -21,8 +26,9 @@ class TestSelection extends LitElement {
     header {
       display: flex;
       align-items: center;
-      gap: 16px;
-      margin-bottom: 24px;
+      gap: 12px;
+      margin-bottom: 16px;
+      min-height: 48px;
     }
 
     .back-btn {
@@ -30,13 +36,45 @@ class TestSelection extends LitElement {
       color: var(--text);
       font-size: 1.2rem;
       padding: 8px 16px;
+      flex-shrink: 0;
     }
 
-    h1 {
-      font-size: 1.6rem;
+    .breadcrumbs {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      flex: 1;
+      min-width: 0;
     }
 
-    .categories {
+    .breadcrumb {
+      background: none;
+      border: none;
+      color: var(--accent);
+      font-size: 1.1rem;
+      padding: 8px 4px;
+      min-height: 48px;
+      white-space: nowrap;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+    }
+
+    .breadcrumb.current {
+      color: var(--text);
+      font-weight: 600;
+      cursor: default;
+    }
+
+    .breadcrumb-sep {
+      color: var(--text-dim);
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+
+    .entries {
       flex: 1;
       display: flex;
       flex-direction: column;
@@ -44,25 +82,140 @@ class TestSelection extends LitElement {
       overflow-y: auto;
     }
 
-    .cat-btn {
+    .run-all-btn {
       display: flex;
       align-items: center;
       background: var(--bg-card);
       color: var(--text);
       font-size: 1.1rem;
+      font-weight: 600;
       padding: 16px 20px;
       text-align: left;
       transition: background 0.15s;
+      border-bottom: 2px solid var(--bg);
     }
 
-    .cat-btn.selected {
+    .run-all-btn.selected {
       background: var(--accent);
       color: white;
     }
 
-    .cat-btn.run-all {
-      font-weight: 600;
-      border-bottom: 2px solid var(--bg);
+    .entry-row {
+      display: flex;
+      align-items: stretch;
+      background: var(--bg-card);
+      border-radius: 8px;
+      min-height: 56px;
+      overflow: hidden;
+    }
+
+    .entry-row.selected {
+      background: color-mix(in srgb, var(--accent) 25%, var(--bg-card));
+    }
+
+    .entry-checkbox {
+      width: 72px;
+      min-height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      background: none;
+      flex-shrink: 0;
+      cursor: pointer;
+      border-right: 1px solid var(--bg);
+    }
+
+    .check-box {
+      width: 28px;
+      height: 28px;
+      border: 2px solid var(--text-dim);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .entry-checkbox.checked .check-box {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .check-mark {
+      display: none;
+      width: 10px;
+      height: 16px;
+      border-right: 3px solid white;
+      border-bottom: 3px solid white;
+      transform: rotate(45deg) translate(-1px, -2px);
+    }
+
+    .entry-checkbox.checked .check-mark {
+      display: block;
+    }
+
+    .entry-label {
+      flex: 1;
+      padding: 12px 16px;
+      font-size: 1.1rem;
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border: none;
+      background: none;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .entry-label.leaf {
+      cursor: default;
+    }
+
+    .type-icon {
+      font-size: 0.85rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    .drill-chevron {
+      color: var(--text-dim);
+      margin-left: auto;
+      font-size: 1.2rem;
+      flex-shrink: 0;
+    }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-dim);
+      font-size: 1.2rem;
+    }
+
+    .spinner-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid var(--bg-card);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
 
     footer {
@@ -104,57 +257,125 @@ class TestSelection extends LitElement {
   constructor() {
     super();
     this.dut = null;
+    this.currentPath = "";
+    this.entries = [];
+    this.breadcrumbs = [];
+    this.loading = false;
+    this.error = null;
     this.runAll = true;
-    this.selected = [];
+    this.selected = new Set();
     this.starting = false;
   }
 
   willUpdate(changed) {
-    if (changed.has("dut")) {
+    if (changed.has("dut") && this.dut) {
+      this.currentPath = "";
       this.starting = false;
+      this._fetchEntries();
     }
+    if (changed.has("currentPath") && !changed.has("dut")) {
+      this._fetchEntries();
+    }
+  }
+
+  async _fetchEntries() {
+    if (!this.dut) return;
+
+    this.loading = true;
+    this.error = null;
+    this.entries = [];
+    this.runAll = true;
+    this.selected = new Set();
+
+    try {
+      const url = `/api/duts/${encodeURIComponent(this.dut.name)}/browse?path=${encodeURIComponent(this.currentPath)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        this.error = data.error || `Error ${resp.status}`;
+        return;
+      }
+      const data = await resp.json();
+      this.entries = data.entries || [];
+      this.breadcrumbs = data.breadcrumbs || [];
+    } catch (e) {
+      this.error = "Failed to fetch";
+    } finally {
+      this.loading = false;
+    }
+
+    this._syncTargets();
   }
 
   _toggleRunAll() {
     this.runAll = !this.runAll;
     if (this.runAll) {
-      this.selected = [];
+      this.selected = new Set();
     }
+    this._syncTargets();
   }
 
-  _toggleCategory(name) {
+  _toggleEntry(path) {
     if (this.runAll) {
       this.runAll = false;
-      this.selected = [name];
-    } else if (this.selected.includes(name)) {
-      this.selected = this.selected.filter((s) => s !== name);
-      if (this.selected.length === 0) {
+      this.selected = new Set([path]);
+    } else if (this.selected.has(path)) {
+      const next = new Set(this.selected);
+      next.delete(path);
+      this.selected = next;
+      if (this.selected.size === 0) {
         this.runAll = true;
       }
     } else {
-      this.selected = [...this.selected, name];
+      this.selected = new Set([...this.selected, path]);
     }
+    this._syncTargets();
+  }
+
+  _drillInto(entry) {
+    if (entry.type === "function") return;
+    this.currentPath = entry.path;
+  }
+
+  _navigateToBreadcrumb(crumb) {
+    this.currentPath = crumb.path;
+  }
+
+  _back() {
+    if (!this.currentPath) {
+      this.dispatchEvent(new CustomEvent("back"));
+    } else {
+      const parts = this.currentPath.split("/");
+      parts.pop();
+      const parent = parts.join("/");
+      // "tests" is the root level, represented as "" in the browse API
+      this.currentPath = parent === "tests" ? "" : parent;
+    }
+  }
+
+  _syncTargets() {
+    const targets = this.runAll ? null : [...this.selected];
+    this.dispatchEvent(
+      new CustomEvent("select-targets", { detail: { targets } })
+    );
   }
 
   _start() {
     if (this.starting) return;
     this.starting = true;
 
-    const categories = this.runAll
-      ? null
-      : this.selected.length > 0
-        ? this.selected
-        : null;
-
+    const targets = this.runAll ? null : [...this.selected];
     this.dispatchEvent(
       new CustomEvent("start-tests", {
-        detail: { dut: this.dut.name, categories },
+        detail: { dut: this.dut.name, targets },
       })
     );
   }
 
-  _back() {
-    this.dispatchEvent(new CustomEvent("back"));
+  _typeIcon(type) {
+    if (type === "directory") return "DIR";
+    if (type === "file") return "PY";
+    return "fn";
   }
 
   render() {
@@ -168,45 +389,86 @@ class TestSelection extends LitElement {
           @pointerup=${TouchFeedback.onRelease}
           @pointerleave=${TouchFeedback.onRelease}
           @click=${this._back}
-        >&larr; Back</button>
-        <h1>${this.dut.name}</h1>
+        >&larr;</button>
+        <div class="breadcrumbs">
+          <button
+            class="breadcrumb ${this.breadcrumbs.length === 0 ? "current" : ""}"
+            @click=${() => { this.currentPath = ""; }}
+          >${this.dut.name}</button>
+          ${this.breadcrumbs.map(
+            (crumb, i) => html`
+              <span class="breadcrumb-sep">&rsaquo;</span>
+              <button
+                class="breadcrumb ${i === this.breadcrumbs.length - 1 ? "current" : ""}"
+                @click=${() => this._navigateToBreadcrumb(crumb)}
+              >${crumb.name}</button>
+            `
+          )}
+        </div>
       </header>
 
-      <div class="categories">
-        <button
-          class="cat-btn run-all ${this.runAll ? "selected" : ""}"
-          @pointerdown=${TouchFeedback.onPress}
-          @pointerup=${TouchFeedback.onRelease}
-          @pointerleave=${TouchFeedback.onRelease}
-          @click=${this._toggleRunAll}
-        >
-          Run All
-        </button>
-        ${(this.dut.categories || []).map(
-          (cat) => html`
-            <button
-              class="cat-btn ${!this.runAll && this.selected.includes(cat.name) ? "selected" : ""}"
-              @pointerdown=${TouchFeedback.onPress}
-              @pointerup=${TouchFeedback.onRelease}
-              @pointerleave=${TouchFeedback.onRelease}
-              @click=${() => this._toggleCategory(cat.name)}
-            >
-              ${cat.name}
-            </button>
-          `
-        )}
-      </div>
+      ${this.loading
+        ? html`<div class="spinner-container"><div class="spinner"></div></div>`
+        : this.error
+          ? html`<div class="empty-state">${this.error}</div>`
+          : this.entries.length === 0
+            ? html`<div class="empty-state">No tests found</div>`
+            : this._renderEntries()
+      }
 
       <footer>
         <button
           class="start-btn"
-          ?disabled=${this.starting}
+          ?disabled=${this.starting || this.loading}
           @pointerdown=${TouchFeedback.onPress}
           @pointerup=${TouchFeedback.onRelease}
           @pointerleave=${TouchFeedback.onRelease}
           @click=${this._start}
         >${this.starting ? "Starting…" : "Start Tests"}</button>
       </footer>
+    `;
+  }
+
+  _renderEntries() {
+    return html`
+      <div class="entries">
+        <button
+          class="run-all-btn ${this.runAll ? "selected" : ""}"
+          @pointerdown=${TouchFeedback.onPress}
+          @pointerup=${TouchFeedback.onRelease}
+          @pointerleave=${TouchFeedback.onRelease}
+          @click=${this._toggleRunAll}
+        >Run All</button>
+        ${this.entries.map((entry) => this._renderEntry(entry))}
+      </div>
+    `;
+  }
+
+  _renderEntry(entry) {
+    const isSelected = !this.runAll && this.selected.has(entry.path);
+    const isLeaf = entry.type === "function";
+
+    return html`
+      <div class="entry-row ${isSelected ? "selected" : ""}">
+        <button
+          class="entry-checkbox ${isSelected ? "checked" : ""}"
+          @pointerdown=${TouchFeedback.onPress}
+          @pointerup=${TouchFeedback.onRelease}
+          @pointerleave=${TouchFeedback.onRelease}
+          @click=${() => this._toggleEntry(entry.path)}
+        ><div class="check-box"><div class="check-mark"></div></div></button>
+        <button
+          class="entry-label ${isLeaf ? "leaf" : ""}"
+          @pointerdown=${TouchFeedback.onPress}
+          @pointerup=${TouchFeedback.onRelease}
+          @pointerleave=${TouchFeedback.onRelease}
+          @click=${() => isLeaf ? this._toggleEntry(entry.path) : this._drillInto(entry)}
+        >
+          <span class="type-icon">${this._typeIcon(entry.type)}</span>
+          ${entry.name}
+          ${!isLeaf ? html`<span class="drill-chevron">&rsaquo;</span>` : null}
+        </button>
+      </div>
     `;
   }
 }

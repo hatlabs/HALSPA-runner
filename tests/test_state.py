@@ -52,6 +52,10 @@ def test_full_pass_flow(sm: StateMachine, serial: MagicMock) -> None:
     serial.send_ui_command.assert_any_call("BUZZER PASS")
 
     sm.dismiss_results()
+    assert sm.state == AppState.DUT_SELECTED
+    assert sm.selected_dut == "HALPI2"
+
+    sm.deselect_dut()
     assert sm.state == AppState.IDLE
     assert sm.selected_dut is None
 

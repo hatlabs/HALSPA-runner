@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from . import config
 from .serial_manager import SerialManager
 from .state import AppState, StateMachine
-from .test_discovery import discover_duts
+from .test_discovery import browse_test_path, discover_duts
 from .test_runner import PytestRunner, RunStatus
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ test_runner: PytestRunner | None = None
 class StartRequest(BaseModel):
     dut: str
     categories: list[str] | None = None
+    targets: list[str] | None = None
 
 
 class ConnectionManager:
@@ -123,17 +124,23 @@ async def _handle_button(event_name: str) -> None:
 
     if event_name == "BUTTON_START":
         state = state_machine.state
-        if state in (AppState.RESULTS_PASS, AppState.RESULTS_FAIL):
-            # Dismiss results and immediately re-run
-            state_machine.dismiss_results()
-            state = AppState.IDLE  # fall through to IDLE handler below
 
-        if state == AppState.IDLE and serial_manager and serial_manager.sandwich_type:
+        if state in (AppState.RESULTS_PASS, AppState.RESULTS_FAIL):
+            # Dismiss results (→ DUT_SELECTED) and fall through to start
+            state_machine.dismiss_results()
+            state = state_machine.state
+
+        if state == AppState.DUT_SELECTED:
+            # Re-run with stored DUT + targets
+            await _start_test_run()
+        elif state == AppState.IDLE and serial_manager and serial_manager.sandwich_type:
+            # Auto-select DUT from sandwich, run all
             dut_name = serial_manager.sandwich_type
             duts = discover_duts()
             matching = [d for d in duts if d.name == dut_name]
             if matching:
-                await _start_test_run(dut_name, None, matching[0].path)
+                state_machine.select_dut(dut_name, matching[0].path)
+                await _start_test_run()
             else:
                 logger.warning("Button press: no DUT matching sandwich type '%s'", dut_name)
         elif state == AppState.IDLE:
@@ -167,6 +174,34 @@ async def get_duts() -> list[dict[str, Any]]:
     ]
 
 
+@app.get("/api/duts/{dut_name}/browse")
+async def browse_dut(dut_name: str, path: str = "") -> JSONResponse:
+    duts = discover_duts()
+    matching = [d for d in duts if d.name == dut_name]
+    if not matching:
+        return JSONResponse({"error": f"DUT '{dut_name}' not found"}, status_code=404)
+
+    try:
+        entries = await browse_test_path(matching[0].path, path)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    # Build breadcrumbs from the path
+    breadcrumbs: list[dict[str, str]] = []
+    if path:
+        parts = path.split("/")
+        for i, part in enumerate(parts):
+            breadcrumbs.append({
+                "name": part,
+                "path": "/".join(parts[: i + 1]),
+            })
+
+    return JSONResponse({
+        "entries": [{"name": e.name, "type": e.type, "path": e.path} for e in entries],
+        "breadcrumbs": breadcrumbs,
+    })
+
+
 @app.post("/api/start")
 async def start_tests(req: StartRequest) -> JSONResponse:
     assert state_machine is not None
@@ -179,9 +214,12 @@ async def start_tests(req: StartRequest) -> JSONResponse:
     if not matching:
         return JSONResponse({"error": f"DUT '{req.dut}' not found"}, status_code=404)
 
-    asyncio.create_task(
-        _start_test_run(req.dut, req.categories, matching[0].path)
-    )
+    state_machine.select_dut(req.dut, matching[0].path)
+    targets = req.targets or req.categories
+    if targets:
+        state_machine.set_targets(targets)
+
+    asyncio.create_task(_start_test_run())
     return JSONResponse({"status": "started"})
 
 
@@ -237,15 +275,31 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             data = await ws.receive_json()
             msg_type = data.get("type")
 
-            if msg_type == "start":
+            if msg_type == "select_dut":
                 dut = data.get("dut")
-                categories = data.get("categories")
                 duts = discover_duts()
                 matching = [d for d in duts if d.name == dut]
                 if matching:
-                    asyncio.create_task(
-                        _start_test_run(dut, categories, matching[0].path)
-                    )
+                    state_machine.select_dut(dut, matching[0].path)
+            elif msg_type == "select":
+                targets = data.get("targets")
+                state_machine.set_targets(targets)
+            elif msg_type == "deselect":
+                state_machine.deselect_dut()
+            elif msg_type == "start":
+                dut = data.get("dut")
+                targets = data.get("targets")
+                # If DUT not yet selected in state machine, select it now
+                if state_machine.selected_dut != dut:
+                    duts = discover_duts()
+                    matching = [d for d in duts if d.name == dut]
+                    if matching:
+                        state_machine.select_dut(dut, matching[0].path)
+                    else:
+                        continue
+                if targets is not None:
+                    state_machine.set_targets(targets)
+                asyncio.create_task(_start_test_run())
             elif msg_type == "stop":
                 if test_runner and test_runner.is_running:
                     await test_runner.cancel()
@@ -259,16 +313,18 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         ws_manager.disconnect(ws)
 
 
-async def _start_test_run(
-    dut_name: str,
-    categories: list[str] | None,
-    repo_path: Path,
-) -> None:
-    """Start a test run and stream results."""
+async def _start_test_run() -> None:
+    """Start a test run using DUT + targets from state machine."""
     assert state_machine is not None
     assert test_runner is not None
 
-    state_machine.select_dut(dut_name)
+    repo_path = state_machine.selected_repo_path
+    targets = state_machine.selected_targets
+
+    if not repo_path:
+        logger.error("Cannot start test run: no repo path in state machine")
+        return
+
     state_machine.start_running()
 
     async def on_line(line: str) -> None:
@@ -289,7 +345,7 @@ async def _start_test_run(
         })
 
     result = await test_runner.run(
-        repo_path, categories=categories,
+        repo_path, targets=targets,
         on_line=on_line, on_progress=on_progress,
         on_test_start=on_test_start,
     )

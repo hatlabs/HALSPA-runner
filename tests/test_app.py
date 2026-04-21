@@ -118,4 +118,4 @@ def test_dismiss_results(client: TestClient, mock_state: StateMachine) -> None:
     mock_state.transition(AppState.RESULTS_PASS)
     resp = client.post("/api/dismiss")
     assert resp.status_code == 200
-    assert mock_state.state == AppState.IDLE
+    assert mock_state.state == AppState.DUT_SELECTED
