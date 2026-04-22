@@ -1,6 +1,7 @@
 ---
 title: "Hardware Sandwich Auto-Detection with Frontend State Sync"
 date: 2026-04-21
+last_updated: 2026-04-22
 category: best-practices
 module: halspa-runner
 problem_type: best_practice
@@ -77,6 +78,22 @@ _tryAutoSelectSandwich() {
 
 The `_hasAutoSelected` guard fires once per session — sandwich changes require power off, so startup detection is sufficient. Returning to the menu manually doesn't re-trigger auto-select.
 
+**Guard must cover all selection paths.** The guard is set inside `_tryAutoSelectSandwich()`, but DUT selection can also happen via the backend — when the browser reloads while the backend is in `dut_selected` state, the initial WebSocket message arrives with `selected_dut` already set. `_tryAutoSelectSandwich()` bails early (because `selectedDut` is non-null) without setting the guard. Fix: also set the guard in the `state_change` handler when the incoming state shows a DUT already matching the sandwich type:
+
+```javascript
+// In _onMessage, when sandwich_type arrives:
+if (data.sandwich_type !== undefined) {
+    this.sandwichType = data.sandwich_type;
+    // Backend already has matching DUT selected (e.g., browser reload)
+    if (this.selectedDut && this.selectedDut === this.sandwichType) {
+        this._hasAutoSelected = true;
+    }
+    this._tryAutoSelectSandwich();
+}
+```
+
+General principle: when using boolean guard flags for "do X only once" patterns, ensure ALL code paths that achieve the guarded outcome also set the guard — not just the primary path.
+
 ### Frontend: Disable non-matching options with error feedback
 
 All DUT buttons disabled unless they match the detected sandwich. Three states need distinct rendering:
@@ -130,3 +147,4 @@ The pattern generalizes to any hardware-gated UI. The key structure is always:
 
 - [Lit selection state preservation](../best-practices/lit-preserve-selection-state-across-screen-transitions.md) — complementary pattern for preserving user selections across screen transitions
 - hatlabs/HALSPA-runner#21 — PR implementing this pattern
+- hatlabs/HALSPA-runner#31 — Fix for browser-reload guard flag edge case
