@@ -141,6 +141,11 @@ class AppShell extends LitElement {
       }
       if (data.sandwich_type !== undefined) {
         this.sandwichType = data.sandwich_type;
+        // If backend already has a matching DUT selected (e.g., after browser
+        // reload), mark auto-select as done so back arrow works correctly.
+        if (this.selectedDut && this.selectedDut === this.sandwichType) {
+          this._hasAutoSelected = true;
+        }
         this._tryAutoSelectSandwich();
       }
       if (data.state === "estop") {
@@ -153,7 +158,6 @@ class AppShell extends LitElement {
         this.outputLines = [];
         this.result = null;
         this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
-        this._hasAutoSelected = false;
         this._dutsLoaded = false;
         this._fetchDuts();
       } else if (data.state === "dut_selected") {
