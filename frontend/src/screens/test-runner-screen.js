@@ -136,31 +136,36 @@ class TestRunnerScreen extends LitElement {
       overflow-y: auto;
       background: #0d1117;
       border-radius: 8px;
-      padding: 12px;
-      padding-bottom: 24px;
+      padding: 12px 56px 24px 12px;
       box-sizing: border-box;
       font-family: var(--font-mono);
       font-size: 14px;
       line-height: 1.4;
       color: #c9d1d9;
-      scrollbar-width: auto;
+      scrollbar-width: none;
       -webkit-user-select: text;
       user-select: text;
     }
 
-    .log::-webkit-scrollbar {
-      width: 20px;
+    .log-scroll-track {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 48px;
+      height: 100%;
+      background: #1c2333;
+      border-radius: 0 8px 8px 0;
     }
 
-    .log::-webkit-scrollbar-track {
-      background: #161b22;
-      border-radius: 4px;
-    }
-
-    .log::-webkit-scrollbar-thumb {
-      background: #444c56;
-      border-radius: 4px;
-      border: 4px solid #161b22;
+    .log-scroll-thumb {
+      position: absolute;
+      right: 4px;
+      width: 40px;
+      min-height: 48px;
+      background: #6b7685;
+      border-radius: 10px;
+      touch-action: none;
+      cursor: grab;
     }
 
     .log-line {
@@ -226,6 +231,7 @@ class TestRunnerScreen extends LitElement {
     const log = this.shadowRoot?.querySelector(".log");
     if (log) {
       log.scrollTop = log.scrollHeight;
+      this._updateScrollThumb();
     }
   }
 
@@ -233,6 +239,53 @@ class TestRunnerScreen extends LitElement {
     const log = e.target;
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     this.autoScroll = atBottom;
+    this._updateScrollThumb();
+  }
+
+  _updateScrollThumb() {
+    const log = this.shadowRoot?.querySelector(".log");
+    const thumb = this.shadowRoot?.querySelector(".log-scroll-thumb");
+    const track = this.shadowRoot?.querySelector(".log-scroll-track");
+    if (!log || !thumb || !track) return;
+    const ratio = log.clientHeight / log.scrollHeight;
+    if (ratio >= 1) {
+      track.style.display = "none";
+      return;
+    }
+    track.style.display = "";
+    const thumbHeight = Math.max(40, track.clientHeight * ratio);
+    const scrollRange = log.scrollHeight - log.clientHeight;
+    const trackRange = track.clientHeight - thumbHeight;
+    const thumbTop = scrollRange > 0 ? (log.scrollTop / scrollRange) * trackRange : 0;
+    thumb.style.height = thumbHeight + "px";
+    thumb.style.top = thumbTop + "px";
+  }
+
+  _onThumbPointerDown(e) {
+    e.preventDefault();
+    this._dragStartY = e.clientY;
+    const thumb = this.shadowRoot?.querySelector(".log-scroll-thumb");
+    this._dragStartTop = parseFloat(thumb?.style.top || "0");
+    const onMove = (ev) => this._onThumbDrag(ev);
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  _onThumbDrag(e) {
+    const log = this.shadowRoot?.querySelector(".log");
+    const track = this.shadowRoot?.querySelector(".log-scroll-track");
+    const thumb = this.shadowRoot?.querySelector(".log-scroll-thumb");
+    if (!log || !track || !thumb) return;
+    const dy = e.clientY - this._dragStartY;
+    const thumbHeight = thumb.offsetHeight;
+    const trackRange = track.clientHeight - thumbHeight;
+    const newTop = Math.max(0, Math.min(trackRange, this._dragStartTop + dy));
+    const scrollRange = log.scrollHeight - log.clientHeight;
+    log.scrollTop = trackRange > 0 ? (newTop / trackRange) * scrollRange : 0;
   }
 
   _snapToBottom() {
@@ -338,6 +391,9 @@ class TestRunnerScreen extends LitElement {
             (line) =>
               html`<div class="log-line ${this._lineClass(line)}">${line}</div>`
           )}
+        </div>
+        <div class="log-scroll-track">
+          <div class="log-scroll-thumb" @pointerdown=${this._onThumbPointerDown}></div>
         </div>
         ${!this.autoScroll
           ? html`<button class="snap-btn" @click=${this._snapToBottom}>
