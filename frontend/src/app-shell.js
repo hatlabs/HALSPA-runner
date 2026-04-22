@@ -84,6 +84,7 @@ class AppShell extends LitElement {
     this._hasAutoSelected = false;
     this._dutsLoaded = false;
     this._browsePath = "";
+    this._selectedTargets = null;
 
     this._boundOnMessage = this._onMessage.bind(this);
     this._boundOnConnected = () => {
@@ -148,6 +149,7 @@ class AppShell extends LitElement {
       if (data.state === "idle") {
         this.selectedDut = null;
         this._browsePath = "";
+        this._selectedTargets = null;
         this.outputLines = [];
         this.result = null;
         this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
@@ -179,6 +181,7 @@ class AppShell extends LitElement {
 
   _onStartTests(e) {
     const { dut, targets } = e.detail;
+    this._selectedTargets = targets;
     this.outputLines = [];
     this._currentTestStartIndex = 0;
     this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
@@ -192,6 +195,10 @@ class AppShell extends LitElement {
 
   _onBrowse(e) {
     this._browsePath = e.detail.path;
+  }
+
+  _onClearSavedTargets() {
+    this._selectedTargets = null;
   }
 
   _onStop() {
@@ -258,9 +265,11 @@ class AppShell extends LitElement {
           <test-selection
             .dut=${dut}
             .initialPath=${this._browsePath}
+            .savedTargets=${this._selectedTargets}
             @start-tests=${this._onStartTests}
             @select-targets=${this._onSelectTargets}
             @browse=${this._onBrowse}
+            @clear-saved-targets=${this._onClearSavedTargets}
             @back=${this._onBack}
           ></test-selection>
         `;

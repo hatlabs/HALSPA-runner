@@ -13,6 +13,7 @@ class TestSelection extends LitElement {
     runAll: { type: Boolean },
     selected: { type: Object },
     starting: { type: Boolean },
+    savedTargets: { type: Array },
   };
 
   static styles = css`
@@ -267,6 +268,8 @@ class TestSelection extends LitElement {
     this.runAll = true;
     this.selected = new Set();
     this.starting = false;
+    this.savedTargets = null;
+    this._fetchGen = 0;
   }
 
   willUpdate(changed) {
@@ -284,6 +287,8 @@ class TestSelection extends LitElement {
   async _fetchEntries() {
     if (!this.dut) return;
 
+    const gen = ++this._fetchGen;
+
     this.loading = true;
     this.error = null;
     this.entries = [];
@@ -293,6 +298,7 @@ class TestSelection extends LitElement {
     try {
       const url = `/api/duts/${encodeURIComponent(this.dut.name)}/browse?path=${encodeURIComponent(this.currentPath)}`;
       const resp = await fetch(url);
+      if (gen !== this._fetchGen) return;
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
         this.error = data.error || `Error ${resp.status}`;
@@ -302,9 +308,23 @@ class TestSelection extends LitElement {
       this.entries = data.entries || [];
       this.breadcrumbs = data.breadcrumbs || [];
     } catch (e) {
+      if (gen !== this._fetchGen) return;
       this.error = "Failed to fetch";
     } finally {
-      this.loading = false;
+      if (gen === this._fetchGen) {
+        this.loading = false;
+      }
+    }
+
+    // Restore selection from savedTargets (one-shot after returning from test run)
+    if (this.savedTargets && this.savedTargets.length > 0) {
+      const entryPaths = new Set(this.entries.map((e) => e.path));
+      const matching = this.savedTargets.filter((t) => entryPaths.has(t));
+      if (matching.length > 0) {
+        this.runAll = false;
+        this.selected = new Set(matching);
+      }
+      this.dispatchEvent(new CustomEvent("clear-saved-targets"));
     }
 
     this._syncTargets();
