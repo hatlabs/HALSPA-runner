@@ -80,6 +80,7 @@ async def lifespan(app: FastAPI):
             "state": new.value,
             "old_state": old.value,
             "sandwich_type": serial_manager.sandwich_type if serial_manager else None,
+            "sandwich_detection_complete": serial_manager.sandwich_detection_complete if serial_manager else False,
             "selected_dut": state_machine.selected_dut if state_machine else None,
         }
         if new == AppState.ESTOP and state_machine:
@@ -115,12 +116,13 @@ async def _consume_events() -> None:
             await _handle_button(event["event"])
         elif event.get("type") == "ui_pico_disconnected":
             await ws_manager.broadcast({"type": "ui_pico_disconnected"})
-        elif event.get("type") == "sandwich_detected":
+        elif event.get("type") in ("sandwich_detected", "sandwich_detection_complete"):
             await ws_manager.broadcast({
                 "type": "state_change",
                 "state": state_machine.state.value,
                 "old_state": state_machine.state.value,
-                "sandwich_type": event["sandwich_type"],
+                "sandwich_type": serial_manager.sandwich_type,
+                "sandwich_detection_complete": serial_manager.sandwich_detection_complete,
                 "selected_dut": state_machine.selected_dut if state_machine else None,
             })
 
@@ -167,6 +169,7 @@ async def get_status() -> dict[str, Any]:
         "state": state_machine.state.value,
         "selected_dut": state_machine.selected_dut,
         "sandwich_type": serial_manager.sandwich_type if serial_manager else None,
+        "sandwich_detection_complete": serial_manager.sandwich_detection_complete if serial_manager else False,
         "ui_pico_connected": serial_manager.ui_pico_connected if serial_manager else False,
         "halspa_pico_connected": serial_manager.halspa_pico_connected if serial_manager else False,
     }
@@ -282,6 +285,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         "state": state_machine.state.value,
         "old_state": None,
         "sandwich_type": serial_manager.sandwich_type if serial_manager else None,
+        "sandwich_detection_complete": serial_manager.sandwich_detection_complete if serial_manager else False,
         "selected_dut": state_machine.selected_dut if state_machine else None,
     })
 

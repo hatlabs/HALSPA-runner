@@ -5,6 +5,7 @@ class MainMenu extends LitElement {
   static properties = {
     duts: { type: Array },
     sandwichType: { type: String },
+    sandwichDetectionComplete: { type: Boolean },
     showShutdown: { type: Boolean },
     shuttingDown: { type: Boolean },
   };
@@ -91,6 +92,7 @@ class MainMenu extends LitElement {
       border-radius: 8px;
       font-size: 1.1rem;
       margin-bottom: 12px;
+      color: var(--text-dim);
     }
 
     .status-msg.error {
@@ -156,6 +158,7 @@ class MainMenu extends LitElement {
     super();
     this.duts = [];
     this.sandwichType = null;
+    this.sandwichDetectionComplete = false;
     this.showShutdown = false;
     this.shuttingDown = false;
   }
@@ -167,6 +170,9 @@ class MainMenu extends LitElement {
   }
 
   _renderStatusMessage() {
+    if (!this.sandwichDetectionComplete) {
+      return html`<div class="status-msg">Detecting sandwich...</div>`;
+    }
     if (!this.sandwichType) {
       return html`<div class="status-msg error">No sandwich detected</div>`;
     }
@@ -208,7 +214,7 @@ class MainMenu extends LitElement {
                 (dut) => html`
                   <button
                     class="dut-btn"
-                    ?disabled=${this.sandwichType !== dut.name}
+                    ?disabled=${!this.sandwichDetectionComplete || this.sandwichType !== dut.name}
                     @pointerdown=${TouchFeedback.onPress}
                     @pointerup=${TouchFeedback.onRelease}
                     @pointerleave=${TouchFeedback.onRelease}

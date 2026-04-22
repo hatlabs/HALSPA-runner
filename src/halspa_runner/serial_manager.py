@@ -51,6 +51,7 @@ class SerialManager:
         self._ui_pico: PicoConnection | None = None
         self._halspa_pico: PicoConnection | None = None
         self._sandwich_type: str | None = None
+        self._sandwich_detection_complete = False
         self._lock = threading.Lock()
         self._reconnect_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -69,6 +70,10 @@ class SerialManager:
     @property
     def sandwich_type(self) -> str | None:
         return self._sandwich_type
+
+    @property
+    def sandwich_detection_complete(self) -> bool:
+        return self._sandwich_detection_complete
 
     def start(self) -> None:
         """Discover Picos and start reader threads."""
@@ -163,6 +168,10 @@ class SerialManager:
         if not self._halspa_pico:
             logger.warning("HALSPA Pico not found — sandwich type unknown")
 
+        if not self._sandwich_detection_complete:
+            self._sandwich_detection_complete = True
+            self._put_event({"type": "sandwich_detection_complete", "sandwich_type": self._sandwich_type})
+
     def _connect_ui_pico(self, port_info: ListPortInfo) -> None:
         """Open connection to the UI Pico and start reader thread."""
         try:
@@ -204,9 +213,9 @@ class SerialManager:
                 line = raw.decode("utf-8", errors="replace").strip()
                 if line.startswith("=== OK: ID "):
                     sandwich_id = line.removeprefix("=== OK: ID ").strip()
-                    self._sandwich_type = sandwich_id
                     conn = PicoConnection(port=ser, device=port_info.device)
                     with self._lock:
+                        self._sandwich_type = sandwich_id
                         self._halspa_pico = conn
                     logger.info(
                         "HALSPA Pico found at %s, sandwich: %s",

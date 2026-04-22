@@ -76,6 +76,7 @@ def test_probes_halspa_pico_with_id_command(
 
     assert mgr.halspa_pico_connected
     assert mgr.sandwich_type == "HALPI2"
+    assert mgr.sandwich_detection_complete
     mock_ser.write.assert_called_with(b"ID\n")
     mgr.stop()
 
@@ -89,6 +90,7 @@ def test_no_picos_found(mock_comports: MagicMock) -> None:
     assert not mgr.ui_pico_connected
     assert not mgr.halspa_pico_connected
     assert mgr.sandwich_type is None
+    assert mgr.sandwich_detection_complete
     mgr.stop()
 
 
@@ -121,6 +123,7 @@ def test_halspa_pico_no_id_response(
 
     assert not mgr.halspa_pico_connected
     assert mgr.sandwich_type is None
+    assert mgr.sandwich_detection_complete
     mgr.stop()
 
 

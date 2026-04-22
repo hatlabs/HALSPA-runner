@@ -136,31 +136,36 @@ class TestRunnerScreen extends LitElement {
       overflow-y: auto;
       background: #0d1117;
       border-radius: 8px;
-      padding: 12px;
-      padding-bottom: 24px;
+      padding: 12px 56px 24px 12px;
       box-sizing: border-box;
       font-family: var(--font-mono);
       font-size: 14px;
       line-height: 1.4;
       color: #c9d1d9;
-      scrollbar-width: auto;
+      scrollbar-width: none; /* Chromium 147 ignores ::-webkit-scrollbar; custom overlay below */
       -webkit-user-select: text;
       user-select: text;
     }
 
-    .log::-webkit-scrollbar {
-      width: 20px;
+    .log-scroll-track {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 48px;
+      height: 100%;
+      background: #1c2333;
+      border-radius: 0 8px 8px 0;
     }
 
-    .log::-webkit-scrollbar-track {
-      background: #161b22;
-      border-radius: 4px;
-    }
-
-    .log::-webkit-scrollbar-thumb {
-      background: #444c56;
-      border-radius: 4px;
-      border: 4px solid #161b22;
+    .log-scroll-thumb {
+      position: absolute;
+      right: 4px;
+      width: 40px;
+      min-height: 48px;
+      background: #6b7685;
+      border-radius: 10px;
+      touch-action: none;
+      cursor: grab;
     }
 
     .log-line {
@@ -223,16 +228,86 @@ class TestRunnerScreen extends LitElement {
   }
 
   _scrollToBottom() {
-    const log = this.shadowRoot?.querySelector(".log");
+    const log = this._logEl();
     if (log) {
       log.scrollTop = log.scrollHeight;
+      this._updateScrollThumb();
     }
+  }
+
+  _logEl() {
+    return this._cachedLog ??= this.shadowRoot?.querySelector(".log");
+  }
+  _trackEl() {
+    return this._cachedTrack ??= this.shadowRoot?.querySelector(".log-scroll-track");
+  }
+  _thumbEl() {
+    return this._cachedThumb ??= this.shadowRoot?.querySelector(".log-scroll-thumb");
   }
 
   _onScroll(e) {
     const log = e.target;
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     this.autoScroll = atBottom;
+    this._updateScrollThumb();
+  }
+
+  _updateScrollThumb() {
+    const log = this._logEl();
+    const thumb = this._thumbEl();
+    const track = this._trackEl();
+    if (!log || !thumb || !track) return;
+    const ratio = log.clientHeight / log.scrollHeight;
+    if (ratio >= 1) {
+      track.style.display = "none";
+      return;
+    }
+    track.style.display = "";
+    const thumbHeight = Math.max(40, track.clientHeight * ratio);
+    const scrollRange = log.scrollHeight - log.clientHeight;
+    const trackRange = track.clientHeight - thumbHeight;
+    if (trackRange <= 0) return;
+    const thumbTop = scrollRange > 0 ? (log.scrollTop / scrollRange) * trackRange : 0;
+    thumb.style.height = thumbHeight + "px";
+    thumb.style.top = thumbTop + "px";
+  }
+
+  _onThumbPointerDown(e) {
+    e.preventDefault();
+    this._dragStartY = e.clientY;
+    this._dragStartTop = parseFloat(this._thumbEl()?.style.top || "0");
+    this._dragOnMove = (ev) => this._onThumbDrag(ev);
+    this._dragOnUp = () => {
+      window.removeEventListener("pointermove", this._dragOnMove);
+      window.removeEventListener("pointerup", this._dragOnUp);
+      this._dragOnMove = null;
+      this._dragOnUp = null;
+      this._dragStartY = null;
+      this._dragStartTop = null;
+    };
+    window.addEventListener("pointermove", this._dragOnMove);
+    window.addEventListener("pointerup", this._dragOnUp);
+  }
+
+  _onThumbDrag(e) {
+    const log = this._logEl();
+    const track = this._trackEl();
+    if (!log || !track || this._dragStartY == null) return;
+    const dy = e.clientY - this._dragStartY;
+    const thumbHeight = this._thumbEl()?.offsetHeight || 0;
+    const trackRange = track.clientHeight - thumbHeight;
+    if (trackRange <= 0) return;
+    const newTop = Math.max(0, Math.min(trackRange, this._dragStartTop + dy));
+    const scrollRange = log.scrollHeight - log.clientHeight;
+    log.scrollTop = (newTop / trackRange) * scrollRange;
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._dragOnMove) {
+      window.removeEventListener("pointermove", this._dragOnMove);
+      window.removeEventListener("pointerup", this._dragOnUp);
+    }
   }
 
   _snapToBottom() {
@@ -338,6 +413,9 @@ class TestRunnerScreen extends LitElement {
             (line) =>
               html`<div class="log-line ${this._lineClass(line)}">${line}</div>`
           )}
+        </div>
+        <div class="log-scroll-track">
+          <div class="log-scroll-thumb" @pointerdown=${this._onThumbPointerDown}></div>
         </div>
         ${!this.autoScroll
           ? html`<button class="snap-btn" @click=${this._snapToBottom}>
