@@ -213,9 +213,9 @@ class SerialManager:
                 line = raw.decode("utf-8", errors="replace").strip()
                 if line.startswith("=== OK: ID "):
                     sandwich_id = line.removeprefix("=== OK: ID ").strip()
-                    self._sandwich_type = sandwich_id
                     conn = PicoConnection(port=ser, device=port_info.device)
                     with self._lock:
+                        self._sandwich_type = sandwich_id
                         self._halspa_pico = conn
                     logger.info(
                         "HALSPA Pico found at %s, sandwich: %s",

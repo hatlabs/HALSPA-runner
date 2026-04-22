@@ -69,6 +69,7 @@ def test_get_status(client: TestClient, mock_state: StateMachine) -> None:
     data = resp.json()
     assert data["state"] == "idle"
     assert data["sandwich_type"] == "HALPI2"
+    assert data["sandwich_detection_complete"] is True
     assert data["selected_dut"] is None
     assert data["ui_pico_connected"] is True
 
