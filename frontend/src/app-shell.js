@@ -12,6 +12,7 @@ class AppShell extends LitElement {
     connected: { type: Boolean },
     selectedDut: { type: String },
     sandwichType: { type: String },
+    sandwichDetectionComplete: { type: Boolean },
     duts: { type: Array },
     progress: { type: Object },
     outputLines: { type: Array },
@@ -138,6 +139,9 @@ class AppShell extends LitElement {
       this.state = data.state;
       if (data.selected_dut !== undefined) {
         this.selectedDut = data.selected_dut;
+      }
+      if (data.sandwich_detection_complete !== undefined) {
+        this.sandwichDetectionComplete = data.sandwich_detection_complete;
       }
       if (data.sandwich_type !== undefined) {
         this.sandwichType = data.sandwich_type;
@@ -285,6 +289,7 @@ class AppShell extends LitElement {
       <main-menu
         .duts=${this.duts}
         .sandwichType=${this.sandwichType}
+        .sandwichDetectionComplete=${this.sandwichDetectionComplete}
         @select-dut=${this._onSelectDut}
       ></main-menu>
     `;

@@ -24,6 +24,7 @@ def mock_state() -> StateMachine:
 def mock_serial() -> MagicMock:
     m = MagicMock()
     m.sandwich_type = "HALPI2"
+    m.sandwich_detection_complete = True
     m.ui_pico_connected = True
     m.halspa_pico_connected = True
     return m
@@ -181,6 +182,7 @@ def test_websocket_initial_message_includes_sandwich_type(
         data = ws.receive_json()
         assert data["type"] == "state_change"
         assert data["sandwich_type"] == "HALPI2"
+        assert data["sandwich_detection_complete"] is True
 
 
 def test_websocket_initial_message_sandwich_type_none(
@@ -190,6 +192,18 @@ def test_websocket_initial_message_sandwich_type_none(
     with client.websocket_connect("/ws") as ws:
         data = ws.receive_json()
         assert data["sandwich_type"] is None
+        assert data["sandwich_detection_complete"] is True
+
+
+def test_websocket_initial_message_sandwich_detection_pending(
+    client: TestClient, mock_serial: MagicMock,
+) -> None:
+    mock_serial.sandwich_type = None
+    mock_serial.sandwich_detection_complete = False
+    with client.websocket_connect("/ws") as ws:
+        data = ws.receive_json()
+        assert data["sandwich_type"] is None
+        assert data["sandwich_detection_complete"] is False
 
 
 def test_websocket_initial_message_includes_selected_dut(
