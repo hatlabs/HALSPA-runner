@@ -1,10 +1,11 @@
 """Tests for test_discovery module."""
 
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from halspa_runner.test_discovery import DUT, Category, browse_test_path, discover_duts
+from halspa_runner.test_discovery import BrowseEntry, DUT, Category, browse_test_path, discover_duts
 
 
 def _make_test_repo(tmp_path: Path, name: str, categories: list[str]) -> Path:
@@ -127,11 +128,14 @@ async def test_browse_root_returns_categories(tmp_path: Path) -> None:
     repo = _make_browse_repo(tmp_path)
     tests_dir = repo / "tests"
     (tests_dir / "100_power").mkdir(parents=True)
-    (tests_dir / "100_power" / "test_rails.py").touch()
     (tests_dir / "200_thermal").mkdir()
-    (tests_dir / "200_thermal" / "test_temp.py").touch()
 
-    entries = await browse_test_path(repo, "")
+    mock_collected = [
+        BrowseEntry(name="test_rails", type="function", path="tests/100_power/test_rails.py::test_rails"),
+        BrowseEntry(name="test_temp", type="function", path="tests/200_thermal/test_temp.py::test_temp"),
+    ]
+    with patch("halspa_runner.test_discovery._run_collect", new_callable=AsyncMock, return_value=mock_collected):
+        entries = await browse_test_path(repo, "")
 
     names = [e.name for e in entries]
     assert "100_power" in names
@@ -144,9 +148,13 @@ async def test_browse_subdirectory_returns_files(tmp_path: Path) -> None:
     repo = _make_browse_repo(tmp_path)
     power_dir = repo / "tests" / "100_power"
     power_dir.mkdir(parents=True)
-    (power_dir / "test_rails.py").touch()
 
-    entries = await browse_test_path(repo, "tests/100_power")
+    mock_collected = [
+        BrowseEntry(name="test_rails", type="function", path="tests/100_power/test_rails.py::test_rails"),
+        BrowseEntry(name="test_5v", type="function", path="tests/100_power/test_rails.py::test_5v"),
+    ]
+    with patch("halspa_runner.test_discovery._run_collect", new_callable=AsyncMock, return_value=mock_collected):
+        entries = await browse_test_path(repo, "tests/100_power")
 
     assert len(entries) == 1
     assert entries[0].name == "test_rails.py"
@@ -186,22 +194,25 @@ async def test_browse_empty_directory(tmp_path: Path) -> None:
     repo = _make_browse_repo(tmp_path)
     power_dir = repo / "tests" / "100_power"
     power_dir.mkdir(parents=True)
-    (power_dir / "__pycache__").mkdir()
 
-    entries = await browse_test_path(repo, "tests/100_power")
+    with patch("halspa_runner.test_discovery._run_collect", new_callable=AsyncMock, return_value=[]):
+        entries = await browse_test_path(repo, "tests/100_power")
 
     assert entries == []
 
 
 @pytest.mark.asyncio
 async def test_browse_skips_conftest(tmp_path: Path) -> None:
+    """pytest --collect-only never includes conftest.py, so neither do we."""
     repo = _make_browse_repo(tmp_path)
     power_dir = repo / "tests" / "100_power"
     power_dir.mkdir(parents=True)
-    (power_dir / "conftest.py").touch()
-    (power_dir / "test_foo.py").touch()
 
-    entries = await browse_test_path(repo, "tests/100_power")
+    mock_collected = [
+        BrowseEntry(name="test_foo", type="function", path="tests/100_power/test_foo.py::test_foo"),
+    ]
+    with patch("halspa_runner.test_discovery._run_collect", new_callable=AsyncMock, return_value=mock_collected):
+        entries = await browse_test_path(repo, "tests/100_power")
 
     names = [e.name for e in entries]
     assert "test_foo.py" in names

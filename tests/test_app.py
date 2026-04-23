@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from halspa_runner import app as app_module
 from halspa_runner.app import app
 from halspa_runner.state import AppState, StateMachine
-from halspa_runner.test_discovery import Category, DUT, discover_duts
+from halspa_runner.test_discovery import BrowseEntry, Category, DUT, discover_duts
 
 
 @pytest.fixture
@@ -141,11 +141,16 @@ def test_browse_root(client: TestClient, tmp_path: Path) -> None:
     tests_dir = repo / "tests"
     power_dir = tests_dir / "100_power"
     power_dir.mkdir(parents=True)
-    (power_dir / "test_rails.py").touch()
 
     mock_dut = DUT(name="HALPI2", path=repo, categories=[Category(name="100_power", path=power_dir)])
+    mock_collected = [
+        BrowseEntry(name="test_rails", type="function", path="tests/100_power/test_rails.py::test_rails"),
+    ]
 
-    with patch("halspa_runner.app.discover_duts", return_value=[mock_dut]):
+    with (
+        patch("halspa_runner.app.discover_duts", return_value=[mock_dut]),
+        patch("halspa_runner.test_discovery._run_collect", new_callable=AsyncMock, return_value=mock_collected),
+    ):
         resp = client.get("/api/duts/HALPI2/browse")
 
     assert resp.status_code == 200
