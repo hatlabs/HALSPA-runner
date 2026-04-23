@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-import os
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -98,18 +98,10 @@ def _enumerate_categories(tests_dir: Path) -> list[Category]:
     return categories
 
 
-def _is_test_file(name: str) -> bool:
-    """Check if a filename matches pytest's test file conventions."""
-    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
-
-
-_SKIP_NAMES = {"__pycache__", "__init__.py", "conftest.py"}
-
-
 async def browse_test_path(repo_path: Path, relative_path: str) -> list[BrowseEntry]:
     """Browse contents of a path within a DUT's test directory.
 
-    For directories, returns subdirectories and test files.
+    For directories, returns subdirectories and test files (via pytest collection).
     For .py files, returns test function names via pytest --collect-only.
 
     Args:
@@ -139,59 +131,60 @@ async def browse_test_path(repo_path: Path, relative_path: str) -> list[BrowseEn
     if not target.exists():
         raise ValueError(f"Path not found: {relative_path}")
 
-    if target.is_file() and _is_test_file(target.name):
+    if target.is_file() and target.suffix == ".py":
         return await _collect_test_functions(repo_path, target)
 
     if not target.is_dir():
         raise ValueError(f"Not a directory or test file: {relative_path}")
 
-    return _browse_directory(repo_path, target)
+    return await _browse_directory(repo_path, target)
 
 
-def _browse_directory(repo_path: Path, directory: Path) -> list[BrowseEntry]:
-    """List test-relevant entries in a directory."""
-    entries: list[BrowseEntry] = []
-    tests_dir = repo_path / "tests"
+async def _browse_directory(repo_path: Path, directory: Path) -> list[BrowseEntry]:
+    """List test files and subdirectories using pytest collection."""
+    rel_dir = str(directory.relative_to(repo_path))
+    uv = _find_uv()
 
     try:
-        items = sorted(directory.iterdir())
-    except OSError as e:
-        logger.warning("Cannot list directory %s: %s", directory, e)
+        collected = await _run_collect(uv, rel_dir, repo_path)
+    except Exception:
+        logger.warning("pytest --collect-only failed for %s", rel_dir, exc_info=True)
         return []
 
-    for item in items:
-        if item.name in _SKIP_NAMES:
-            continue
+    # Extract unique files and subdirectories from function-level entries
+    files: dict[str, str] = {}  # name -> rel_path
+    subdirs: dict[str, str] = {}  # name -> rel_path
+    dir_rel = Path(rel_dir)
 
-        rel_path = str(item.relative_to(repo_path))
+    for entry in collected:
+        file_path_str = entry.path.split("::")[0]
+        file_path = Path(file_path_str)
+        file_parent = file_path.parent
 
-        if item.is_dir():
-            # Include directories that contain test files at any depth
-            if _dir_has_tests(item):
-                entries.append(BrowseEntry(name=item.name, type="directory", path=rel_path))
-        elif _is_test_file(item.name):
-            entries.append(BrowseEntry(name=item.name, type="file", path=rel_path))
+        if file_parent == dir_rel:
+            if file_path.name not in files:
+                files[file_path.name] = file_path_str
+        else:
+            try:
+                relative = file_parent.relative_to(dir_rel)
+                subdir_name = relative.parts[0]
+                subdir_path = str(dir_rel / subdir_name)
+                if subdir_name not in subdirs:
+                    subdirs[subdir_name] = subdir_path
+            except ValueError:
+                continue
+
+    entries: list[BrowseEntry] = []
+    for name in sorted(subdirs):
+        entries.append(BrowseEntry(name=name, type="directory", path=subdirs[name]))
+    for name in sorted(files):
+        entries.append(BrowseEntry(name=name, type="file", path=files[name]))
 
     return entries
 
 
-def _dir_has_tests(directory: Path) -> bool:
-    """Check if a directory or its descendants contain test files."""
-    try:
-        for root, dirs, files in os.walk(directory):
-            dirs[:] = [d for d in dirs if d not in _SKIP_NAMES]
-            for f in files:
-                if _is_test_file(f):
-                    return True
-    except OSError as e:
-        logger.warning("Cannot walk directory %s: %s", directory, e)
-    return False
-
-
-async def _collect_test_functions(repo_path: Path, test_file: Path) -> list[BrowseEntry]:
-    """Discover test functions in a file using pytest --collect-only."""
-    import shutil
-
+def _find_uv() -> str:
+    """Locate the uv binary."""
     uv = shutil.which("uv")
     if not uv:
         for candidate in [
@@ -201,9 +194,12 @@ async def _collect_test_functions(repo_path: Path, test_file: Path) -> list[Brow
             if candidate.exists():
                 uv = str(candidate)
                 break
-    if not uv:
-        uv = "uv"
+    return uv or "uv"
 
+
+async def _collect_test_functions(repo_path: Path, test_file: Path) -> list[BrowseEntry]:
+    """Discover test functions in a file using pytest --collect-only."""
+    uv = _find_uv()
     rel_file = str(test_file.relative_to(repo_path))
 
     try:
