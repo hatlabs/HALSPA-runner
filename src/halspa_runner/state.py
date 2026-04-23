@@ -62,6 +62,11 @@ class StateMachine:
         self._estop_power_off_failed = False
         self._estop_run_was_active = False
         self._estop_clear_timer: threading.Timer | None = None
+        # Serialises the ESTOP lifecycle (handle / auto-clear / manual clear)
+        # so the timer thread and the async event loop can't interleave their
+        # transitions. Other state transitions don't touch ESTOP and don't
+        # need this lock.
+        self._estop_lock = threading.Lock()
 
         # Check if halspa library is available for e-stop power control
         try:
@@ -178,12 +183,14 @@ class StateMachine:
                                the cancellation. Otherwise, the runner is cancelled
                                via its synchronous interface if available.
         """
-        if self._state == AppState.ESTOP:
-            return  # Already in e-stop, ignore duplicate
-
-        self._estop_power_off_failed = False
-        self._estop_run_was_active = bool(self._runner and self._runner.is_running)
-        self.transition(AppState.ESTOP)
+        with self._estop_lock:
+            if self._state == AppState.ESTOP:
+                return  # Already in e-stop, ignore duplicate
+            self._estop_power_off_failed = False
+            self._estop_run_was_active = bool(
+                self._runner and self._runner.is_running
+            )
+            self.transition(AppState.ESTOP)
 
         # Buzzer alarm
         if self._serial:
@@ -208,7 +215,11 @@ class StateMachine:
         # safety-gated interlock — the operator is not required to acknowledge.
         self._arm_auto_clear()
 
-    def _arm_auto_clear(self, delay: float = ESTOP_AUTO_CLEAR_SECONDS) -> None:
+    def _arm_auto_clear(self, delay: float | None = None) -> None:
+        # Resolve the delay at call time so tests/tuning that monkeypatch the
+        # module constant take effect.
+        if delay is None:
+            delay = ESTOP_AUTO_CLEAR_SECONDS
         if self._estop_clear_timer is not None:
             self._estop_clear_timer.cancel()
         t = threading.Timer(delay, self._auto_clear_estop)
@@ -218,20 +229,21 @@ class StateMachine:
 
     def _auto_clear_estop(self) -> None:
         """Timer callback. Transitions out of ESTOP to RESULTS_FAIL or IDLE."""
-        self._estop_clear_timer = None
-        if self._state != AppState.ESTOP:
-            return
-        if self._serial:
-            self._serial.send_ui_command("BUZZER OFF")
-        if self._estop_run_was_active:
-            # Abort counts as fail. No BUZZER FAIL — the ESTOP alarm was the cue.
-            self.transition(AppState.RESULTS_FAIL)
-        else:
-            # No run was in progress; drop all selection and return to idle.
-            self._selected_dut = None
-            self._selected_repo_path = None
-            self._selected_targets = None
-            self.transition(AppState.IDLE)
+        with self._estop_lock:
+            self._estop_clear_timer = None
+            if self._state != AppState.ESTOP:
+                return
+            if self._serial:
+                self._serial.send_ui_command("BUZZER OFF")
+            if self._estop_run_was_active:
+                # Abort counts as fail. No BUZZER FAIL — the ESTOP alarm was the cue.
+                self.transition(AppState.RESULTS_FAIL)
+            else:
+                # No run was in progress; drop all selection and return to idle.
+                self._selected_dut = None
+                self._selected_repo_path = None
+                self._selected_targets = None
+                self.transition(AppState.IDLE)
 
     def clear_estop(self) -> None:
         """Manual recovery path. Normally e-stop auto-clears; this is used
@@ -239,19 +251,20 @@ class StateMachine:
         power-off failure (or as a safety net if the timer misfires).
         Performs a hard reset of selection.
         """
-        if self._state != AppState.ESTOP:
-            return
-        if self._estop_clear_timer is not None:
-            self._estop_clear_timer.cancel()
-            self._estop_clear_timer = None
-        self._selected_dut = None
-        self._selected_repo_path = None
-        self._selected_targets = None
-        self._estop_power_off_failed = False
-        self._estop_run_was_active = False
-        if self._serial:
-            self._serial.send_ui_command("BUZZER OFF")
-        self.transition(AppState.IDLE)
+        with self._estop_lock:
+            if self._state != AppState.ESTOP:
+                return
+            if self._estop_clear_timer is not None:
+                self._estop_clear_timer.cancel()
+                self._estop_clear_timer = None
+            self._selected_dut = None
+            self._selected_repo_path = None
+            self._selected_targets = None
+            self._estop_power_off_failed = False
+            self._estop_run_was_active = False
+            if self._serial:
+                self._serial.send_ui_command("BUZZER OFF")
+            self.transition(AppState.IDLE)
 
     def _emergency_power_off(self) -> None:
         """Disable all power via I2C. Called during e-stop."""
