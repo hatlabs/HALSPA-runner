@@ -22,8 +22,15 @@ def runner() -> MagicMock:
 
 
 @pytest.fixture
-def sm(serial: MagicMock, runner: MagicMock) -> StateMachine:
-    return StateMachine(serial_manager=serial, test_runner=runner)
+def sm(serial: MagicMock, runner: MagicMock):
+    # Patch threading.Timer inside state module so e-stop auto-clear timers
+    # never actually run in unit tests — we assert scheduling and drive
+    # auto-clear deterministically via _auto_clear_estop().
+    with patch("halspa_runner.state.threading.Timer") as timer_cls:
+        timer_cls.return_value = MagicMock()
+        sm = StateMachine(serial_manager=serial, test_runner=runner)
+        sm._test_timer_cls = timer_cls  # exposed for introspection
+        yield sm
 
 
 def test_initial_state(sm: StateMachine) -> None:
@@ -71,7 +78,9 @@ def test_full_fail_flow(sm: StateMachine, serial: MagicMock) -> None:
     serial.send_ui_command.assert_any_call("BUZZER FAIL")
 
 
-def test_estop_during_running(sm: StateMachine, serial: MagicMock, runner: MagicMock) -> None:
+def test_estop_during_running_enters_estop(
+    sm: StateMachine, serial: MagicMock, runner: MagicMock
+) -> None:
     sm.set_ready()
     sm.start_running()
     runner.is_running = True
@@ -82,10 +91,77 @@ def test_estop_during_running(sm: StateMachine, serial: MagicMock, runner: Magic
     serial.send_ui_command.assert_any_call("BUZZER ESTOP")
 
 
-def test_estop_when_not_running(sm: StateMachine) -> None:
+def test_estop_auto_clear_timer_is_armed(sm: StateMachine, runner: MagicMock) -> None:
+    """handle_estop schedules an auto-clear timer with the configured delay."""
+    from halspa_runner.state import ESTOP_AUTO_CLEAR_SECONDS
+
     sm.set_ready()
+    runner.is_running = True
+    sm.start_running()
     sm.handle_estop()
+
+    sm._test_timer_cls.assert_called_once()
+    delay_arg = sm._test_timer_cls.call_args.args[0]
+    assert delay_arg == ESTOP_AUTO_CLEAR_SECONDS
+    sm._test_timer_cls.return_value.start.assert_called_once()
+
+
+def test_auto_clear_after_run_goes_to_results_fail(
+    sm: StateMachine, serial: MagicMock, runner: MagicMock
+) -> None:
+    """Abort during a run counts as fail; no BUZZER FAIL follows the alarm."""
+    sm.set_ready()
+    sm.select_dut("HALPI2")
+    sm.start_running()
+    runner.is_running = True
+    sm.handle_estop()
+
+    serial.reset_mock()
+    sm._auto_clear_estop()
+
+    assert sm.state == AppState.RESULTS_FAIL
+    # BUZZER OFF stops the alarm; no BUZZER FAIL after ESTOP.
+    serial.send_ui_command.assert_any_call("BUZZER OFF")
+    serial.send_ui_command.assert_any_call("LED SOLID_RED")
+    for call in serial.send_ui_command.call_args_list:
+        assert call.args[0] != "BUZZER FAIL"
+
+
+def test_auto_clear_without_active_run_goes_to_idle(
+    sm: StateMachine, serial: MagicMock
+) -> None:
+    """E-stop with no run in progress returns cleanly to idle, no fail state."""
+    sm.set_ready()
+    sm.select_dut("HALPI2")
+    # runner.is_running is False by default
+    sm.handle_estop()
+
+    serial.reset_mock()
+    sm._auto_clear_estop()
+
+    assert sm.state == AppState.IDLE
+    assert sm.selected_dut is None
+    serial.send_ui_command.assert_any_call("LED PULSE_WHITE")
+    serial.send_ui_command.assert_any_call("BUZZER OFF")
+
+
+def test_tests_completed_during_estop_is_noop(
+    sm: StateMachine, serial: MagicMock, runner: MagicMock
+) -> None:
+    """Runner cancel-callback during ESTOP must not steal the transition
+    or emit BUZZER FAIL; the ESTOP auto-clear owns the outcome.
+    """
+    sm.set_ready()
+    runner.is_running = True
+    sm.start_running()
+    sm.handle_estop()
+    serial.reset_mock()
+
+    sm.tests_completed(passed=False)
+
     assert sm.state == AppState.ESTOP
+    for call in serial.send_ui_command.call_args_list:
+        assert call.args[0] != "BUZZER FAIL"
 
 
 def test_duplicate_estop_ignored(sm: StateMachine, serial: MagicMock) -> None:
@@ -97,14 +173,23 @@ def test_duplicate_estop_ignored(sm: StateMachine, serial: MagicMock) -> None:
     serial.send_ui_command.assert_not_called()
 
 
-def test_clear_estop(sm: StateMachine) -> None:
+def test_manual_clear_cancels_pending_timer(sm: StateMachine) -> None:
     sm.set_ready()
     sm.handle_estop()
-    assert sm.state == AppState.ESTOP
+    timer = sm._test_timer_cls.return_value
 
     sm.clear_estop()
+
+    timer.cancel.assert_called_once()
     assert sm.state == AppState.IDLE
     assert sm.selected_dut is None
+
+
+def test_clear_estop_is_safe_net_outside_estop(sm: StateMachine) -> None:
+    """Calling clear_estop while not in ESTOP is a no-op."""
+    sm.set_ready()
+    sm.clear_estop()
+    assert sm.state == AppState.IDLE
 
 
 def test_state_change_callback(sm: StateMachine) -> None:
@@ -120,7 +205,8 @@ def test_state_change_callback(sm: StateMachine) -> None:
 
 
 def test_no_serial_manager(runner: MagicMock) -> None:
-    sm = StateMachine(serial_manager=None, test_runner=runner)
+    with patch("halspa_runner.state.threading.Timer"):
+        sm = StateMachine(serial_manager=None, test_runner=runner)
     # Should not raise when sending LED commands without serial
     sm.set_ready()
     sm.start_running()
