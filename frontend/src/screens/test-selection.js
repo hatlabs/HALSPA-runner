@@ -184,6 +184,15 @@ class TestSelection extends LitElement {
       flex-shrink: 0;
     }
 
+    .noauto-badge {
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--yellow) 20%, var(--bg-card));
+      color: var(--yellow);
+      flex-shrink: 0;
+    }
+
     .drill-chevron {
       color: var(--text-dim);
       margin-left: auto;
@@ -491,6 +500,7 @@ class TestSelection extends LitElement {
         >
           <span class="type-icon">${this._typeIcon(entry.type)}</span>
           ${entry.name}
+          ${entry.markers?.includes("noauto") ? html`<span class="noauto-badge">noauto</span>` : null}
           ${!isLeaf ? html`<span class="drill-chevron">&rsaquo;</span>` : null}
         </button>
       </div>

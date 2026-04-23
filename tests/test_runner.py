@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from halspa_runner.test_runner import RunStatus, PytestRunner
+from halspa_runner.test_runner import RunStatus, PytestRunner, _has_noauto_targets
 
 
 @pytest.fixture
@@ -412,3 +412,109 @@ async def test_targets_takes_precedence_over_categories(runner: PytestRunner, tm
     assert "tests/200_thermal/test_temp.py" in args
     assert "tests/000_selftest" not in args
     assert "tests/100_power" not in args
+
+
+# --- _has_noauto_targets tests ---
+
+
+def test_has_noauto_targets_detects_noauto_function(tmp_path: Path) -> None:
+    test_file = tmp_path / "tests" / "foo" / "bar_test.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text(
+        "import pytest\n\n@pytest.mark.noauto\ndef test_noauto_fn(): pass\n"
+    )
+
+    result = _has_noauto_targets(tmp_path, ["tests/foo/bar_test.py::test_noauto_fn"])
+
+    assert result is True
+
+
+def test_has_noauto_targets_normal_function_returns_false(tmp_path: Path) -> None:
+    test_file = tmp_path / "tests" / "foo" / "bar_test.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("def test_normal_fn(): pass\n")
+
+    result = _has_noauto_targets(tmp_path, ["tests/foo/bar_test.py::test_normal_fn"])
+
+    assert result is False
+
+
+def test_has_noauto_targets_directory_target_no_flag(tmp_path: Path) -> None:
+    result = _has_noauto_targets(tmp_path, ["tests/100_power"])
+
+    assert result is False
+
+
+def test_has_noauto_targets_file_target_no_colons_no_flag(tmp_path: Path) -> None:
+    result = _has_noauto_targets(tmp_path, ["tests/100_power/test_rails.py"])
+
+    assert result is False
+
+
+def test_has_noauto_targets_mixed_any_noauto_returns_true(tmp_path: Path) -> None:
+    test_file = tmp_path / "tests" / "foo" / "bar_test.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text(
+        "import pytest\n\n@pytest.mark.noauto\ndef test_noauto_fn(): pass\ndef test_normal(): pass\n"
+    )
+
+    result = _has_noauto_targets(
+        tmp_path,
+        ["tests/foo/bar_test.py::test_normal", "tests/foo/bar_test.py::test_noauto_fn"],
+    )
+
+    assert result is True
+
+
+def test_has_noauto_targets_empty_targets_returns_false(tmp_path: Path) -> None:
+    result = _has_noauto_targets(tmp_path, [])
+
+    assert result is False
+
+
+def test_has_noauto_targets_parameterized_nodeid_matches(tmp_path: Path) -> None:
+    test_file = tmp_path / "tests" / "foo" / "bar_test.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text(
+        "import pytest\n\n@pytest.mark.noauto\ndef test_noauto_fn(): pass\n"
+    )
+
+    result = _has_noauto_targets(tmp_path, ["tests/foo/bar_test.py::test_noauto_fn[param1]"])
+
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_noauto_target_adds_markexpr_flag(runner: PytestRunner, tmp_path: Path) -> None:
+    test_file = tmp_path / "tests" / "foo" / "bar_test.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text(
+        "import pytest\n\n@pytest.mark.noauto\ndef test_noauto_fn(): pass\n"
+    )
+
+    report_path = str(tmp_path / "report.jsonl")
+    _, patches = _setup_mock([], exit_code=0, report_path=report_path, report_events=[])
+
+    with patches as ctx:
+        await runner.run(tmp_path, targets=["tests/foo/bar_test.py::test_noauto_fn"])
+
+    args = list(ctx.mock_exec.call_args[0])
+    assert "-m" in args
+    idx = args.index("-m")
+    assert args[idx + 1] == "noauto or not noauto"
+
+
+@pytest.mark.asyncio
+async def test_normal_target_no_markexpr_flag(runner: PytestRunner, tmp_path: Path) -> None:
+    test_file = tmp_path / "tests" / "foo" / "bar_test.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("def test_normal_fn(): pass\n")
+
+    report_path = str(tmp_path / "report.jsonl")
+    _, patches = _setup_mock([], exit_code=0, report_path=report_path, report_events=[])
+
+    with patches as ctx:
+        await runner.run(tmp_path, targets=["tests/foo/bar_test.py::test_normal_fn"])
+
+    args = list(ctx.mock_exec.call_args[0])
+    assert "-m" not in args

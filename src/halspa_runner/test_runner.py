@@ -12,10 +12,11 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from collections.abc import Awaitable, Callable
 
 from . import config
 from .subprocess_utils import find_uv
+from .test_discovery import _scan_noauto_markers
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,21 @@ class RunResult:
     exit_code: int | None = None
 
 
+def _has_noauto_targets(repo_path: Path, targets: list[str]) -> bool:
+    """Return True if any function-level target carries @pytest.mark.noauto."""
+    for target in targets:
+        if "::" not in target:
+            continue
+        file_part, func_name = target.rsplit("::", 1)
+        # Strip parameterize suffix: test_fn[param1] → test_fn
+        func_name_base = func_name.split("[")[0]
+        source_file = repo_path / file_part
+        noauto = _scan_noauto_markers(source_file)
+        if func_name_base in noauto:
+            return True
+    return False
+
+
 class PytestRunner:
     """Spawns pytest as a subprocess and streams output."""
 
@@ -73,9 +89,9 @@ class PytestRunner:
         repo_path: Path,
         categories: list[str] | None = None,
         targets: list[str] | None = None,
-        on_line: Any = None,
-        on_progress: Any = None,
-        on_test_start: Any = None,
+        on_line: Callable[[str], Awaitable[None]] | None = None,
+        on_progress: Callable[[RunProgress], Awaitable[None]] | None = None,
+        on_test_start: Callable[[str], Awaitable[None]] | None = None,
     ) -> RunResult:
         """Run pytest in the given repo, streaming output.
 
@@ -121,13 +137,20 @@ class PytestRunner:
         categories: list[str] | None,
         targets: list[str] | None,
         progress: RunProgress,
-        on_line: Any,
-        on_progress: Any,
-        on_test_start: Any,
+        on_line: Callable[[str], Awaitable[None]] | None,
+        on_progress: Callable[[RunProgress], Awaitable[None]] | None,
+        on_test_start: Callable[[str], Awaitable[None]] | None,
     ) -> RunResult:
         uv = find_uv()
         args = [uv, "run", "pytest", "-p", "halspa_runner.pytest_reporter", "-s"]
         if targets is not None:
+            if _has_noauto_targets(repo_path, targets):
+                # Tautological expression — every test either has the noauto marker or
+                # doesn't. Sole effect: sets markexpr to a truthy value so the conftest
+                # skip hook ("if keywordexpr or markexpr: return") returns early and
+                # allows noauto-decorated tests to run. Note: this bypasses ALL conftest
+                # skip logic for the batch, not just noauto skips.
+                args.extend(["-m", "noauto or not noauto"])
             args.extend(targets)
         elif categories:
             args.extend(f"tests/{cat}" for cat in categories)
@@ -203,8 +226,11 @@ class PytestRunner:
         return RunResult(status=status, progress=progress, exit_code=exit_code)
 
     async def _read_stdout_pty(
-        self, master_fd: int, progress: RunProgress,
-        on_line: Any, on_test_start: Any,
+        self,
+        master_fd: int,
+        progress: RunProgress,
+        on_line: Callable[[str], Awaitable[None]] | None,
+        on_test_start: Callable[[str], Awaitable[None]] | None,
     ) -> None:
         """Read stdout from a PTY for display.
 
@@ -285,8 +311,8 @@ class PytestRunner:
         self,
         report_path: str,
         progress: RunProgress,
-        on_progress: Any,
-        on_test_start: Any,
+        on_progress: Callable[[RunProgress], Awaitable[None]] | None,
+        on_test_start: Callable[[str], Awaitable[None]] | None,
     ) -> None:
         """Tail the JSONL report file for structured progress updates."""
         # Wait for the file to have content
