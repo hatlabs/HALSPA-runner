@@ -138,8 +138,11 @@ class AppShell extends LitElement {
     if (data.type === "state_change") {
       if (data.state === "estop") {
         // Remember the underlying state so the previous screen stays visible
-        // behind the transient ESTOP modal.
-        this._preEstopState = this.state;
+        // behind the transient ESTOP modal. Don't overwrite it on duplicate
+        // estop messages — that would clobber the real underlying state.
+        if (this.state !== "estop") {
+          this._preEstopState = this.state;
+        }
       } else {
         this._preEstopState = null;
       }

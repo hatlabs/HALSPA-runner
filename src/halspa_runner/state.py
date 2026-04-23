@@ -147,10 +147,12 @@ class StateMachine:
 
     def tests_completed(self, passed: bool) -> None:
         """Called when pytest finishes."""
-        # When pytest is cancelled by e-stop, the ESTOP auto-clear owns the
-        # transition and the ESTOP buzzer is the only cue — don't overlap it
-        # with BUZZER FAIL or jump state.
-        if self._state == AppState.ESTOP:
+        # Only act when we are actually in RUNNING. If the e-stop handler
+        # already moved us out of RUNNING (ESTOP, or RESULTS_FAIL once the
+        # auto-clear timer has fired), the ESTOP auto-clear owns the outcome
+        # and the ESTOP buzzer is the only cue — don't overlap it with
+        # BUZZER FAIL or re-emit state.
+        if self._state != AppState.RUNNING:
             return
         if passed:
             self.transition(AppState.RESULTS_PASS)

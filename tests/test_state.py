@@ -164,6 +164,49 @@ def test_tests_completed_during_estop_is_noop(
         assert call.args[0] != "BUZZER FAIL"
 
 
+def test_tests_completed_after_auto_clear_is_noop(
+    sm: StateMachine, serial: MagicMock, runner: MagicMock
+) -> None:
+    """Cancel callback can arrive after the auto-clear timer has already
+    transitioned to RESULTS_FAIL (cancel path's SIGTERM wait + SIGKILL can
+    exceed the 2.5 s timer budget). In that case, tests_completed must not
+    re-emit BUZZER FAIL over the ESTOP alarm that just finished.
+    """
+    sm.set_ready()
+    runner.is_running = True
+    sm.start_running()
+    sm.handle_estop()
+    sm._auto_clear_estop()
+    assert sm.state == AppState.RESULTS_FAIL
+    serial.reset_mock()
+
+    sm.tests_completed(passed=False)
+
+    assert sm.state == AppState.RESULTS_FAIL
+    for call in serial.send_ui_command.call_args_list:
+        assert call.args[0] != "BUZZER FAIL"
+
+
+def test_repeat_estop_after_auto_clear_rearms_timer(
+    sm: StateMachine, runner: MagicMock
+) -> None:
+    """After auto-clear to RESULTS_FAIL, a fresh e-stop must arm a new
+    timer and transition to ESTOP again.
+    """
+    sm.set_ready()
+    runner.is_running = True
+    sm.start_running()
+    sm.handle_estop()
+    sm._auto_clear_estop()
+    assert sm.state == AppState.RESULTS_FAIL
+    runner.is_running = False
+
+    sm.handle_estop()
+
+    assert sm.state == AppState.ESTOP
+    assert sm._test_timer_cls.call_count == 2
+
+
 def test_duplicate_estop_ignored(sm: StateMachine, serial: MagicMock) -> None:
     sm.set_ready()
     sm.handle_estop()
