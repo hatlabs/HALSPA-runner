@@ -1,17 +1,24 @@
 """Scan a directory for *-tests repositories and enumerate test categories."""
 
 import asyncio
+import fnmatch
 import logging
 import os
-import shutil
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import config
+from .subprocess_utils import find_uv
 
 logger = logging.getLogger(__name__)
 
 _COLLECT_TIMEOUT = 5.0
+
+# Default pytest test file patterns (same as pytest's defaults)
+_DEFAULT_PYTHON_FILES = ["test_*.py", "*_test.py"]
+
+_SKIP_NAMES = {"__pycache__", "__init__.py", "conftest.py"}
 
 
 @dataclass
@@ -38,6 +45,10 @@ class DUT:
     name: str
     path: Path
     categories: list[Category] = field(default_factory=list)
+
+
+class BrowseError(Exception):
+    """Raised when browsing fails due to a system error (not user input)."""
 
 
 def discover_duts(scan_dir: Path | None = None) -> list[DUT]:
@@ -99,11 +110,38 @@ def _enumerate_categories(tests_dir: Path) -> list[Category]:
     return categories
 
 
+def _read_python_files(repo_path: Path) -> list[str]:
+    """Read python_files patterns from repo's pyproject.toml.
+
+    Falls back to pytest defaults if pyproject.toml is missing or
+    doesn't configure python_files.
+    """
+    pyproject = repo_path / "pyproject.toml"
+    if not pyproject.is_file():
+        return _DEFAULT_PYTHON_FILES
+
+    try:
+        with open(pyproject, "rb") as f:
+            config = tomllib.load(f)
+        patterns = config.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("python_files")
+        if patterns and isinstance(patterns, list):
+            return patterns
+    except (tomllib.TOMLDecodeError, OSError) as e:
+        logger.warning("Failed to read pyproject.toml at %s: %s", pyproject, e)
+
+    return _DEFAULT_PYTHON_FILES
+
+
+def _is_test_file(name: str, patterns: list[str]) -> bool:
+    """Check if a filename matches any of the given pytest file patterns."""
+    return name.endswith(".py") and any(fnmatch.fnmatch(name, p) for p in patterns)
+
+
 async def browse_test_path(repo_path: Path, relative_path: str) -> list[BrowseEntry]:
     """Browse contents of a path within a DUT's test directory.
 
-    For directories, returns subdirectories and test files (via pytest collection).
-    For .py files, returns test function names via pytest --collect-only.
+    For directories, returns subdirectories and test files.
+    For .py test files, returns test function names via pytest --collect-only.
 
     Args:
         repo_path: Root of the *-tests repository.
@@ -115,6 +153,7 @@ async def browse_test_path(repo_path: Path, relative_path: str) -> list[BrowseEn
 
     Raises:
         ValueError: If path is invalid or escapes the repo.
+        BrowseError: If browsing fails due to a system error.
     """
     if ".." in relative_path.split("/"):
         raise ValueError("Path traversal not allowed")
@@ -125,82 +164,68 @@ async def browse_test_path(repo_path: Path, relative_path: str) -> list[BrowseEn
     else:
         target = tests_dir.resolve()
 
-    # Containment check
-    if not str(target).startswith(str(tests_dir.resolve())):
+    # Containment check using proper path semantics
+    try:
+        target.relative_to(tests_dir.resolve())
+    except ValueError:
         raise ValueError("Path escapes test directory")
 
     if not target.exists():
         raise ValueError(f"Path not found: {relative_path}")
 
-    if target.is_file() and target.suffix == ".py":
+    patterns = _read_python_files(repo_path)
+
+    if target.is_file() and _is_test_file(target.name, patterns):
         return await _collect_test_functions(repo_path, target)
 
     if not target.is_dir():
         raise ValueError(f"Not a directory or test file: {relative_path}")
 
-    return await _browse_directory(repo_path, target)
+    return _browse_directory(repo_path, target, patterns)
 
 
-async def _browse_directory(repo_path: Path, directory: Path) -> list[BrowseEntry]:
-    """List test files and subdirectories using pytest collection."""
-    rel_dir = str(directory.relative_to(repo_path))
-    uv = _find_uv()
+def _browse_directory(
+    repo_path: Path, directory: Path, patterns: list[str],
+) -> list[BrowseEntry]:
+    """List test-relevant entries in a directory using filesystem scan."""
+    entries: list[BrowseEntry] = []
 
     try:
-        collected = await _run_collect(uv, rel_dir, repo_path)
-    except Exception:
-        logger.warning("pytest --collect-only failed for %s", rel_dir, exc_info=True)
-        return []
+        items = sorted(directory.iterdir())
+    except OSError as e:
+        raise BrowseError(f"Cannot list directory {directory}: {e}") from e
 
-    # Extract unique files and subdirectories from function-level entries
-    files: dict[str, str] = {}  # name -> rel_path
-    subdirs: dict[str, str] = {}  # name -> rel_path
-    dir_rel = Path(rel_dir)
+    for item in items:
+        if item.name in _SKIP_NAMES:
+            continue
 
-    for entry in collected:
-        file_path_str = entry.path.split("::")[0]
-        file_path = Path(file_path_str)
-        file_parent = file_path.parent
+        rel_path = str(item.relative_to(repo_path))
 
-        if file_parent == dir_rel:
-            if file_path.name not in files:
-                files[file_path.name] = file_path_str
-        else:
-            try:
-                relative = file_parent.relative_to(dir_rel)
-                subdir_name = relative.parts[0]
-                subdir_path = str(dir_rel / subdir_name)
-                if subdir_name not in subdirs:
-                    subdirs[subdir_name] = subdir_path
-            except ValueError:
-                continue
-
-    entries: list[BrowseEntry] = []
-    for name in sorted(subdirs):
-        entries.append(BrowseEntry(name=name, type="directory", path=subdirs[name]))
-    for name in sorted(files):
-        entries.append(BrowseEntry(name=name, type="file", path=files[name]))
+        if item.is_dir():
+            if _dir_has_tests(item, patterns):
+                entries.append(BrowseEntry(name=item.name, type="directory", path=rel_path))
+        elif _is_test_file(item.name, patterns):
+            entries.append(BrowseEntry(name=item.name, type="file", path=rel_path))
 
     return entries
 
 
-def _find_uv() -> str:
-    """Locate the uv binary."""
-    uv = shutil.which("uv")
-    if not uv:
-        for candidate in [
-            Path.home() / ".local" / "bin" / "uv",
-            Path("/usr/local/bin/uv"),
-        ]:
-            if candidate.exists():
-                uv = str(candidate)
-                break
-    return uv or "uv"
+def _dir_has_tests(directory: Path, patterns: list[str]) -> bool:
+    """Check if a directory or its descendants contain test files."""
+    try:
+        for root, dirs, files in os.walk(directory):
+            dirs[:] = [d for d in dirs if d not in _SKIP_NAMES]
+            for f in files:
+                if _is_test_file(f, patterns):
+                    return True
+    except OSError as e:
+        logger.warning("Cannot walk directory %s: %s", directory, e)
+    return False
 
 
 async def _collect_test_functions(repo_path: Path, test_file: Path) -> list[BrowseEntry]:
     """Discover test functions in a file using pytest --collect-only."""
-    uv = _find_uv()
+    uv = find_uv()
     rel_file = str(test_file.relative_to(repo_path))
 
     try:
@@ -212,15 +237,10 @@ async def _collect_test_functions(repo_path: Path, test_file: Path) -> list[Brow
 
 async def _run_collect(uv: str, rel_file: str, repo_path: Path) -> list[BrowseEntry]:
     """Run pytest --collect-only and parse output."""
-    # Clear VIRTUAL_ENV so uv discovers the target repo's project, not ours.
-    # Add repo root to PYTHONPATH so test modules can import repo-level config
-    # (e.g., dut_config.py) even with --noconftest.
+    # Clear VIRTUAL_ENV so uv discovers the target repo's project, not ours
     env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
-    existing_pypath = env.get("PYTHONPATH", "")
-    repo_str = str(repo_path)
-    env["PYTHONPATH"] = f"{repo_str}:{existing_pypath}" if existing_pypath else repo_str
     proc = await asyncio.create_subprocess_exec(
-        uv, "run", "pytest", "--collect-only", "-qq", "--noconftest", rel_file,
+        uv, "run", "pytest", "--collect-only", "-qq", rel_file,
         cwd=str(repo_path),
         env=env,
         stdout=asyncio.subprocess.PIPE,
@@ -234,9 +254,7 @@ async def _run_collect(uv: str, rel_file: str, repo_path: Path) -> list[BrowseEn
         logger.warning("pytest --collect-only timed out for %s", rel_file)
         return []
 
-    if proc.returncode not in (0, 2):
-        # 0=success, 2=partial collection (some import errors) — both have usable output.
-        # Other codes (3=internal error, 4=nothing collected, 5=nothing selected) don't.
+    if proc.returncode != 0:
         stderr_text = stderr.decode("utf-8", errors="replace").strip()
         logger.warning(
             "pytest --collect-only returned %d for %s: %s",
@@ -249,7 +267,7 @@ async def _run_collect(uv: str, rel_file: str, repo_path: Path) -> list[BrowseEn
 
     for line in stdout.decode("utf-8", errors="replace").splitlines():
         line = line.strip()
-        # pytest -q output: "tests/100_power/test_rails.py::test_5v_output"
+        # pytest -qq output: "tests/100_power/test_rails.py::test_5v_output"
         if "::" not in line or not line.startswith(rel_file):
             continue
 

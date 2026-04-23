@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from . import config
 from .serial_manager import SerialManager
 from .state import AppState, StateMachine
-from .test_discovery import browse_test_path, discover_duts
+from .test_discovery import BrowseError, browse_test_path, discover_duts
 from .test_runner import PytestRunner, RunStatus
 
 logger = logging.getLogger(__name__)
@@ -198,6 +198,9 @@ async def browse_dut(dut_name: str, path: str = "") -> JSONResponse:
         entries = await browse_test_path(matching[0].path, path)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+    except BrowseError as e:
+        logger.warning("Browse failed for %s path=%s: %s", dut_name, path, e)
+        return JSONResponse({"error": str(e)}, status_code=500)
     except OSError as e:
         logger.warning("Browse failed for %s path=%s: %s", dut_name, path, e)
         return JSONResponse({"error": "Could not browse path"}, status_code=500)

@@ -15,27 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from . import config
+from .subprocess_utils import find_uv
 
 logger = logging.getLogger(__name__)
 
 # ANSI escape code pattern
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def _find_uv() -> str:
-    """Find the uv executable path."""
-    import shutil
-    path = shutil.which("uv")
-    if path:
-        return path
-    # Common locations
-    for candidate in [
-        Path.home() / ".local" / "bin" / "uv",
-        Path("/usr/local/bin/uv"),
-    ]:
-        if candidate.exists():
-            return str(candidate)
-    return "uv"  # fall back to bare name
 
 
 class RunStatus(Enum):
@@ -140,7 +125,7 @@ class PytestRunner:
         on_progress: Any,
         on_test_start: Any,
     ) -> RunResult:
-        uv = _find_uv()
+        uv = find_uv()
         args = [uv, "run", "pytest", "-p", "halspa_runner.pytest_reporter", "-s"]
         if targets is not None:
             args.extend(targets)
