@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -211,22 +212,36 @@ async def _collect_test_functions(repo_path: Path, test_file: Path) -> list[Brow
 
 async def _run_collect(uv: str, rel_file: str, repo_path: Path) -> list[BrowseEntry]:
     """Run pytest --collect-only and parse output."""
+    # Clear VIRTUAL_ENV so uv discovers the target repo's project, not ours.
+    # Add repo root to PYTHONPATH so test modules can import repo-level config
+    # (e.g., dut_config.py) even with --noconftest.
+    env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
+    existing_pypath = env.get("PYTHONPATH", "")
+    repo_str = str(repo_path)
+    env["PYTHONPATH"] = f"{repo_str}:{existing_pypath}" if existing_pypath else repo_str
     proc = await asyncio.create_subprocess_exec(
-        uv, "run", "pytest", "--collect-only", "-qq", rel_file,
+        uv, "run", "pytest", "--collect-only", "-qq", "--noconftest", rel_file,
         cwd=str(repo_path),
+        env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_COLLECT_TIMEOUT)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_COLLECT_TIMEOUT)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
         logger.warning("pytest --collect-only timed out for %s", rel_file)
         return []
 
-    if proc.returncode != 0:
-        logger.warning("pytest --collect-only returned %d for %s", proc.returncode, rel_file)
+    if proc.returncode not in (0, 2):
+        # 0=success, 2=partial collection (some import errors) — both have usable output.
+        # Other codes (3=internal error, 4=nothing collected, 5=nothing selected) don't.
+        stderr_text = stderr.decode("utf-8", errors="replace").strip()
+        logger.warning(
+            "pytest --collect-only returned %d for %s: %s",
+            proc.returncode, rel_file, stderr_text or "(no stderr)",
+        )
         return []
 
     entries: list[BrowseEntry] = []
