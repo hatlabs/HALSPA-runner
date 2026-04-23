@@ -472,6 +472,18 @@ def test_has_noauto_targets_empty_targets_returns_false(tmp_path: Path) -> None:
     assert result is False
 
 
+def test_has_noauto_targets_parameterized_nodeid_matches(tmp_path: Path) -> None:
+    test_file = tmp_path / "tests" / "foo" / "bar_test.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text(
+        "import pytest\n\n@pytest.mark.noauto\ndef test_noauto_fn(): pass\n"
+    )
+
+    result = _has_noauto_targets(tmp_path, ["tests/foo/bar_test.py::test_noauto_fn[param1]"])
+
+    assert result is True
+
+
 @pytest.mark.asyncio
 async def test_noauto_target_adds_markexpr_flag(runner: PytestRunner, tmp_path: Path) -> None:
     test_file = tmp_path / "tests" / "foo" / "bar_test.py"

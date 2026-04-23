@@ -240,17 +240,19 @@ def _scan_noauto_markers(source_file: Path) -> set[str]:
 
     noauto_funcs: set[str] = set()
     for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for dec in node.decorator_list:
+            # Unwrap @pytest.mark.noauto("reason") call form
+            dec_node = dec.func if isinstance(dec, ast.Call) else dec
             # Match @pytest.mark.noauto  (Attribute chain: pytest -> mark -> noauto)
             if (
-                isinstance(dec, ast.Attribute)
-                and dec.attr == "noauto"
-                and isinstance(dec.value, ast.Attribute)
-                and dec.value.attr == "mark"
-                and isinstance(dec.value.value, ast.Name)
-                and dec.value.value.id == "pytest"
+                isinstance(dec_node, ast.Attribute)
+                and dec_node.attr == "noauto"
+                and isinstance(dec_node.value, ast.Attribute)
+                and dec_node.value.attr == "mark"
+                and isinstance(dec_node.value.value, ast.Name)
+                and dec_node.value.value.id == "pytest"
             ):
                 noauto_funcs.add(node.name)
                 break
@@ -272,8 +274,8 @@ async def _collect_test_functions(repo_path: Path, test_file: Path) -> list[Brow
     if noauto:
         for entry in entries:
             if entry.type == "function":
-                func_name = entry.path.rsplit("::", 1)[-1]
-                if func_name in noauto:
+                func_name_base = entry.path.rsplit("::", 1)[-1].split("[")[0]
+                if func_name_base in noauto:
                     entry.markers = ["noauto"]
     return entries
 

@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from unittest.mock import AsyncMock, patch
+
 from halspa_runner.test_discovery import (
+    BrowseEntry,
     BrowseError,
     DUT,
     Category,
@@ -357,6 +360,20 @@ def test_scan_noauto_markers_missing_file_returns_empty(tmp_path: Path) -> None:
     assert result == set()
 
 
+def test_scan_noauto_markers_detects_async_function(tmp_path: Path) -> None:
+    source = tmp_path / "test_example.py"
+    source.write_text(
+        "import pytest\n"
+        "\n"
+        "@pytest.mark.noauto\n"
+        "async def test_async_manual(): pass\n"
+    )
+
+    result = _scan_noauto_markers(source)
+
+    assert "test_async_manual" in result
+
+
 def test_scan_noauto_markers_ignores_module_level_pytestmark(tmp_path: Path) -> None:
     source = tmp_path / "test_example.py"
     source.write_text(
@@ -370,3 +387,87 @@ def test_scan_noauto_markers_ignores_module_level_pytestmark(tmp_path: Path) -> 
     result = _scan_noauto_markers(source)
 
     assert result == set()
+
+
+def test_scan_noauto_markers_detects_call_form(tmp_path: Path) -> None:
+    """@pytest.mark.noauto("reason") call form should also be detected."""
+    source = tmp_path / "test_example.py"
+    source.write_text(
+        "import pytest\n"
+        "\n"
+        '@pytest.mark.noauto("requires manual setup")\n'
+        "def test_with_reason(): pass\n"
+    )
+
+    result = _scan_noauto_markers(source)
+
+    assert "test_with_reason" in result
+
+
+# --- _collect_test_functions marker assignment tests ---
+
+
+@pytest.mark.asyncio
+async def test_collect_test_functions_sets_noauto_marker(tmp_path: Path) -> None:
+    """Verify _collect_test_functions propagates noauto markers to BrowseEntry objects."""
+    repo = tmp_path / "repo"
+    power_dir = repo / "tests" / "100_power"
+    power_dir.mkdir(parents=True)
+    test_file = power_dir / "test_manual.py"
+    test_file.write_text(
+        "import pytest\n\n@pytest.mark.noauto\ndef test_noauto_fn(): pass\n"
+    )
+
+    rel_path = "tests/100_power/test_manual.py"
+    fake_nodeid = f"{rel_path}::test_noauto_fn"
+    fake_entries = [BrowseEntry(name="test_noauto_fn", type="function", path=fake_nodeid)]
+
+    with patch("halspa_runner.test_discovery._run_collect", new=AsyncMock(return_value=fake_entries)):
+        entries = await browse_test_path(repo, rel_path)
+
+    assert len(entries) == 1
+    assert entries[0].markers == ["noauto"]
+
+
+@pytest.mark.asyncio
+async def test_collect_test_functions_no_marker_for_normal_fn(tmp_path: Path) -> None:
+    """Normal functions get no noauto marker even when browsed at file level."""
+    repo = tmp_path / "repo"
+    power_dir = repo / "tests" / "100_power"
+    power_dir.mkdir(parents=True)
+    test_file = power_dir / "test_normal.py"
+    test_file.write_text("def test_normal_fn(): pass\n")
+
+    rel_path = "tests/100_power/test_normal.py"
+    fake_nodeid = f"{rel_path}::test_normal_fn"
+    fake_entries = [BrowseEntry(name="test_normal_fn", type="function", path=fake_nodeid)]
+
+    with patch("halspa_runner.test_discovery._run_collect", new=AsyncMock(return_value=fake_entries)):
+        entries = await browse_test_path(repo, rel_path)
+
+    assert len(entries) == 1
+    assert entries[0].markers == []
+
+
+# --- _run_collect error path tests ---
+
+
+@pytest.mark.asyncio
+async def test_run_collect_nonzero_exit_returns_empty(tmp_path: Path) -> None:
+    """_collect_test_functions returns empty list when pytest exits non-zero."""
+    repo = tmp_path / "repo"
+    power_dir = repo / "tests" / "100_power"
+    power_dir.mkdir(parents=True)
+    test_file = power_dir / "test_bad.py"
+    test_file.write_text("def test_fn(): pass\n")
+
+    rel_path = "tests/100_power/test_bad.py"
+
+    proc_mock = AsyncMock()
+    proc_mock.returncode = 1
+    proc_mock.communicate = AsyncMock(return_value=(b"", b"collection error"))
+
+    with patch("asyncio.create_subprocess_exec", return_value=proc_mock):
+        entries = await browse_test_path(repo, rel_path)
+
+    assert entries == []

@@ -188,8 +188,8 @@ class TestSelection extends LitElement {
       font-size: 0.75rem;
       padding: 2px 8px;
       border-radius: 12px;
-      background: #5a4a00;
-      color: #ffd54f;
+      background: color-mix(in srgb, var(--yellow) 20%, var(--bg-card));
+      color: var(--yellow);
       flex-shrink: 0;
     }
 
