@@ -216,7 +216,7 @@ async def browse_dut(dut_name: str, path: str = "") -> JSONResponse:
             })
 
     return JSONResponse({
-        "entries": [{"name": e.name, "type": e.type, "path": e.path} for e in entries],
+        "entries": [{"name": e.name, "type": e.type, "path": e.path, "markers": e.markers} for e in entries],
         "breadcrumbs": breadcrumbs,
     })
 

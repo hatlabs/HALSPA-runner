@@ -163,6 +163,25 @@ def test_browse_dut_not_found(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+def test_browse_entries_include_markers_field(client: TestClient, tmp_path: Path) -> None:
+    repo = tmp_path / "HALPI2-tests"
+    tests_dir = repo / "tests"
+    power_dir = tests_dir / "100_power"
+    power_dir.mkdir(parents=True)
+    (power_dir / "test_rails.py").touch()
+
+    mock_dut = DUT(name="HALPI2", path=repo, categories=[Category(name="100_power", path=power_dir)])
+
+    with patch("halspa_runner.app.discover_duts", return_value=[mock_dut]):
+        resp = client.get("/api/duts/HALPI2/browse")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    for entry in data["entries"]:
+        assert "markers" in entry
+        assert isinstance(entry["markers"], list)
+
+
 def test_browse_invalid_path(client: TestClient, tmp_path: Path) -> None:
     repo = tmp_path / "HALPI2-tests"
     tests_dir = repo / "tests"

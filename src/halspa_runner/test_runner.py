@@ -16,6 +16,7 @@ from typing import Any
 
 from . import config
 from .subprocess_utils import find_uv
+from .test_discovery import _scan_noauto_markers
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,22 @@ class RunResult:
     status: RunStatus
     progress: RunProgress
     exit_code: int | None = None
+
+
+def _has_noauto_targets(repo_path: Path, targets: list[str]) -> bool:
+    """Return True if any function-level target carries @pytest.mark.noauto."""
+    for target in targets:
+        if "::" not in target:
+            continue
+        file_part, func_name = target.rsplit("::", 1)
+        source_file = repo_path / file_part
+        try:
+            noauto = _scan_noauto_markers(source_file)
+        except Exception:
+            continue
+        if func_name in noauto:
+            return True
+    return False
 
 
 class PytestRunner:
@@ -128,6 +145,8 @@ class PytestRunner:
         uv = find_uv()
         args = [uv, "run", "pytest", "-p", "halspa_runner.pytest_reporter", "-s"]
         if targets is not None:
+            if _has_noauto_targets(repo_path, targets):
+                args.extend(["-m", "noauto or not noauto"])
             args.extend(targets)
         elif categories:
             args.extend(f"tests/{cat}" for cat in categories)

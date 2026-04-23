@@ -10,6 +10,7 @@ from halspa_runner.test_discovery import (
     Category,
     _is_test_file,
     _read_python_files,
+    _scan_noauto_markers,
     browse_test_path,
     discover_duts,
 )
@@ -296,3 +297,76 @@ async def test_browse_skips_conftest(tmp_path: Path) -> None:
     names = [e.name for e in entries]
     assert "test_foo.py" in names
     assert "conftest.py" not in names
+
+
+# --- _scan_noauto_markers tests ---
+
+
+def test_scan_noauto_markers_detects_decorated_function(tmp_path: Path) -> None:
+    source = tmp_path / "test_example.py"
+    source.write_text(
+        "import pytest\n"
+        "\n"
+        "@pytest.mark.noauto\n"
+        "def test_manual(): pass\n"
+        "\n"
+        "def test_normal(): pass\n"
+    )
+
+    result = _scan_noauto_markers(source)
+
+    assert result == {"test_manual"}
+
+
+def test_scan_noauto_markers_no_noauto(tmp_path: Path) -> None:
+    source = tmp_path / "test_example.py"
+    source.write_text("def test_normal(): pass\n")
+
+    result = _scan_noauto_markers(source)
+
+    assert result == set()
+
+
+def test_scan_noauto_markers_multiple_decorators(tmp_path: Path) -> None:
+    source = tmp_path / "test_example.py"
+    source.write_text(
+        "import pytest\n"
+        "\n"
+        "@pytest.mark.slow\n"
+        "@pytest.mark.noauto\n"
+        "def test_slow_manual(): pass\n"
+    )
+
+    result = _scan_noauto_markers(source)
+
+    assert "test_slow_manual" in result
+
+
+def test_scan_noauto_markers_syntax_error_returns_empty(tmp_path: Path) -> None:
+    source = tmp_path / "test_bad.py"
+    source.write_text("def broken(:\n")
+
+    result = _scan_noauto_markers(source)
+
+    assert result == set()
+
+
+def test_scan_noauto_markers_missing_file_returns_empty(tmp_path: Path) -> None:
+    result = _scan_noauto_markers(tmp_path / "does_not_exist.py")
+
+    assert result == set()
+
+
+def test_scan_noauto_markers_ignores_module_level_pytestmark(tmp_path: Path) -> None:
+    source = tmp_path / "test_example.py"
+    source.write_text(
+        "import pytest\n"
+        "pytestmark = [pytest.mark.noauto]\n"
+        "\n"
+        "def test_something(): pass\n"
+    )
+
+    # Module-level pytestmark is out of scope — should NOT detect test_something
+    result = _scan_noauto_markers(source)
+
+    assert result == set()

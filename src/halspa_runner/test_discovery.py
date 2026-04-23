@@ -1,5 +1,6 @@
 """Scan a directory for *-tests repositories and enumerate test categories."""
 
+import ast
 import asyncio
 import fnmatch
 import logging
@@ -36,6 +37,7 @@ class BrowseEntry:
     name: str
     type: str  # "directory" | "file" | "function"
     path: str  # relative to repo root
+    markers: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -223,16 +225,57 @@ def _dir_has_tests(directory: Path, patterns: list[str]) -> bool:
     return False
 
 
+def _scan_noauto_markers(source_file: Path) -> set[str]:
+    """Return function names decorated with @pytest.mark.noauto via AST scan.
+
+    Only detects direct function decorators — module-level pytestmark is out of scope.
+    Returns empty set on any parse/IO error.
+    """
+    try:
+        source = source_file.read_text(encoding="utf-8", errors="replace")
+        tree = ast.parse(source, filename=str(source_file))
+    except (OSError, SyntaxError) as e:
+        logger.debug("AST parse failed for %s: %s", source_file, e)
+        return set()
+
+    noauto_funcs: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for dec in node.decorator_list:
+            # Match @pytest.mark.noauto  (Attribute chain: pytest -> mark -> noauto)
+            if (
+                isinstance(dec, ast.Attribute)
+                and dec.attr == "noauto"
+                and isinstance(dec.value, ast.Attribute)
+                and dec.value.attr == "mark"
+                and isinstance(dec.value.value, ast.Name)
+                and dec.value.value.id == "pytest"
+            ):
+                noauto_funcs.add(node.name)
+                break
+    return noauto_funcs
+
+
 async def _collect_test_functions(repo_path: Path, test_file: Path) -> list[BrowseEntry]:
     """Discover test functions in a file using pytest --collect-only."""
     uv = find_uv()
     rel_file = str(test_file.relative_to(repo_path))
 
     try:
-        return await _run_collect(uv, rel_file, repo_path)
+        entries = await _run_collect(uv, rel_file, repo_path)
     except Exception:
         logger.warning("pytest --collect-only failed for %s", rel_file, exc_info=True)
         return []
+
+    noauto = _scan_noauto_markers(test_file)
+    if noauto:
+        for entry in entries:
+            if entry.type == "function":
+                func_name = entry.path.rsplit("::", 1)[-1]
+                if func_name in noauto:
+                    entry.markers = ["noauto"]
+    return entries
 
 
 async def _run_collect(uv: str, rel_file: str, repo_path: Path) -> list[BrowseEntry]:
