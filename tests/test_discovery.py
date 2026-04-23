@@ -4,7 +4,15 @@ from pathlib import Path
 
 import pytest
 
-from halspa_runner.test_discovery import DUT, Category, browse_test_path, discover_duts
+from halspa_runner.test_discovery import (
+    BrowseError,
+    DUT,
+    Category,
+    _is_test_file,
+    _read_python_files,
+    browse_test_path,
+    discover_duts,
+)
 
 
 def _make_test_repo(tmp_path: Path, name: str, categories: list[str]) -> Path:
@@ -112,13 +120,65 @@ def test_categories_sorted_by_name(tmp_path: Path) -> None:
     assert names == ["000_selftest", "100_power", "200_controller", "300_canbus"]
 
 
+# --- _read_python_files tests ---
+
+
+def test_read_python_files_from_pyproject(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\npython_files = ["*_test.py", "*_action.py"]\n'
+    )
+
+    patterns = _read_python_files(tmp_path)
+
+    assert patterns == ["*_test.py", "*_action.py"]
+
+
+def test_read_python_files_defaults_without_pyproject(tmp_path: Path) -> None:
+    patterns = _read_python_files(tmp_path)
+
+    assert patterns == ["test_*.py", "*_test.py"]
+
+
+def test_read_python_files_defaults_without_python_files_key(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\naddopts = '-v'\n")
+
+    patterns = _read_python_files(tmp_path)
+
+    assert patterns == ["test_*.py", "*_test.py"]
+
+
+# --- _is_test_file tests ---
+
+
+def test_is_test_file_default_patterns() -> None:
+    patterns = ["test_*.py", "*_test.py"]
+    assert _is_test_file("test_rails.py", patterns)
+    assert _is_test_file("usb_vbus_test.py", patterns)
+    assert not _is_test_file("conftest.py", patterns)
+    assert not _is_test_file("__init__.py", patterns)
+    assert not _is_test_file("helper.py", patterns)
+
+
+def test_is_test_file_custom_patterns() -> None:
+    patterns = ["*_test.py", "*_action.py"]
+    assert _is_test_file("usb_vbus_test.py", patterns)
+    assert _is_test_file("flash_controller_action.py", patterns)
+    assert not _is_test_file("test_rails.py", patterns)
+    assert not _is_test_file("conftest.py", patterns)
+
+
 # --- browse_test_path tests ---
 
 
-def _make_browse_repo(tmp_path: Path) -> Path:
+def _make_browse_repo(tmp_path: Path, python_files: list[str] | None = None) -> Path:
     """Create a repo with tests/ structure for browse_test_path tests."""
     repo = tmp_path / "repo"
     repo.mkdir()
+    if python_files is not None:
+        patterns_str = ", ".join(f'"{p}"' for p in python_files)
+        (repo / "pyproject.toml").write_text(
+            f"[tool.pytest.ini_options]\npython_files = [{patterns_str}]\n"
+        )
     return repo
 
 
@@ -154,6 +214,23 @@ async def test_browse_subdirectory_returns_files(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_browse_respects_custom_python_files(tmp_path: Path) -> None:
+    repo = _make_browse_repo(tmp_path, python_files=["*_test.py", "*_action.py"])
+    ctrl_dir = repo / "tests" / "200_controller"
+    ctrl_dir.mkdir(parents=True)
+    (ctrl_dir / "flash_controller_action.py").touch()
+    (ctrl_dir / "usb_vbus_test.py").touch()
+    (ctrl_dir / "helper.py").touch()
+
+    entries = await browse_test_path(repo, "tests/200_controller")
+
+    names = [e.name for e in entries]
+    assert "flash_controller_action.py" in names
+    assert "usb_vbus_test.py" in names
+    assert "helper.py" not in names
+
+
+@pytest.mark.asyncio
 async def test_browse_rejects_path_traversal(tmp_path: Path) -> None:
     repo = _make_browse_repo(tmp_path)
     (repo / "tests").mkdir()
@@ -170,6 +247,19 @@ async def test_browse_rejects_path_escape(tmp_path: Path) -> None:
     # A path that resolves outside the tests/ directory
     with pytest.raises(ValueError):
         await browse_test_path(repo, "src/something")
+
+
+@pytest.mark.asyncio
+async def test_browse_rejects_path_with_shared_prefix(tmp_path: Path) -> None:
+    """tests_extra/ must not pass containment check despite sharing 'tests' prefix."""
+    repo = _make_browse_repo(tmp_path)
+    (repo / "tests").mkdir()
+    tests_extra = repo / "tests_extra"
+    tests_extra.mkdir()
+    (tests_extra / "secret.py").touch()
+
+    with pytest.raises(ValueError):
+        await browse_test_path(repo, "tests_extra/secret.py")
 
 
 @pytest.mark.asyncio
