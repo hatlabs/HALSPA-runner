@@ -4,7 +4,7 @@ import "./screens/main-menu.js";
 import "./screens/test-selection.js";
 import "./screens/test-runner-screen.js";
 import "./screens/results-summary.js";
-import "./screens/estop-screen.js";
+import "./screens/estop-modal.js";
 
 class AppShell extends LitElement {
   static properties = {
@@ -136,6 +136,16 @@ class AppShell extends LitElement {
     const data = e.detail;
 
     if (data.type === "state_change") {
+      if (data.state === "estop") {
+        // Remember the underlying state so the previous screen stays visible
+        // behind the transient ESTOP modal. Don't overwrite it on duplicate
+        // estop messages — that would clobber the real underlying state.
+        if (this.state !== "estop") {
+          this._preEstopState = this.state;
+        }
+      } else {
+        this._preEstopState = null;
+      }
       this.state = data.state;
       if (data.selected_dut !== undefined) {
         this.selectedDut = data.selected_dut;
@@ -228,16 +238,22 @@ class AppShell extends LitElement {
 
   render() {
     if (this.state === "estop") {
+      // Render whichever screen was active before the e-stop, with the modal
+      // overlaid on top. The modal auto-dismisses when the backend transitions
+      // out of ESTOP (~2.5 s) — no user action required on the happy path.
       return html`
-        ${this._renderDisconnected()}
-        <estop-screen
+        ${this._renderForState(this._preEstopState || "idle")}
+        <estop-modal
           .powerOffFailed=${this.powerOffFailed}
           @clear-estop=${this._onClearEstop}
-        ></estop-screen>
+        ></estop-modal>
       `;
     }
+    return this._renderForState(this.state);
+  }
 
-    if (this.state === "booting") {
+  _renderForState(state) {
+    if (state === "booting") {
       return html`
         <div class="loading">
           <div class="spinner"></div>
@@ -246,7 +262,7 @@ class AppShell extends LitElement {
       `;
     }
 
-    if (this.state === "results_pass" || this.state === "results_fail" || this.state === "running") {
+    if (state === "results_pass" || state === "results_fail" || state === "running") {
       return html`
         ${this._renderDisconnected()}
         <test-runner-screen
@@ -254,8 +270,8 @@ class AppShell extends LitElement {
           .outputLines=${this.outputLines}
           .currentTestStartIndex=${this._currentTestStartIndex}
           .selectedDut=${this.selectedDut}
-          .result=${this.state.startsWith("results_") ? this.result : null}
-          .finished=${this.state.startsWith("results_")}
+          .result=${state.startsWith("results_") ? this.result : null}
+          .finished=${state.startsWith("results_")}
           @stop=${this._onStop}
           @dismiss=${this._onDismiss}
         ></test-runner-screen>

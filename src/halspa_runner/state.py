@@ -1,6 +1,7 @@
 """Application state machine with e-stop logic and optional I2C power control."""
 
 import logging
+import threading
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -10,6 +11,10 @@ if TYPE_CHECKING:
     from .test_runner import PytestRunner
 
 logger = logging.getLogger(__name__)
+
+# E-stop modal is transient: the ESTOP buzzer runs ~2 s, then we hold a short
+# beat before auto-clearing so the blink-red LED is unmistakable.
+ESTOP_AUTO_CLEAR_SECONDS = 2.5
 
 
 class AppState(Enum):
@@ -55,6 +60,13 @@ class StateMachine:
         self._selected_targets: list[str] | None = None
         self._power_control_available = False
         self._estop_power_off_failed = False
+        self._estop_run_was_active = False
+        self._estop_clear_timer: threading.Timer | None = None
+        # Serialises the ESTOP lifecycle (handle / auto-clear / manual clear)
+        # so the timer thread and the async event loop can't interleave their
+        # transitions. Other state transitions don't touch ESTOP and don't
+        # need this lock.
+        self._estop_lock = threading.Lock()
 
         # Check if halspa library is available for e-stop power control
         try:
@@ -140,6 +152,13 @@ class StateMachine:
 
     def tests_completed(self, passed: bool) -> None:
         """Called when pytest finishes."""
+        # Only act when we are actually in RUNNING. If the e-stop handler
+        # already moved us out of RUNNING (ESTOP, or RESULTS_FAIL once the
+        # auto-clear timer has fired), the ESTOP auto-clear owns the outcome
+        # and the ESTOP buzzer is the only cue — don't overlap it with
+        # BUZZER FAIL or re-emit state.
+        if self._state != AppState.RUNNING:
+            return
         if passed:
             self.transition(AppState.RESULTS_PASS)
             if self._serial:
@@ -164,11 +183,14 @@ class StateMachine:
                                the cancellation. Otherwise, the runner is cancelled
                                via its synchronous interface if available.
         """
-        if self._state == AppState.ESTOP:
-            return  # Already in e-stop, ignore duplicate
-
-        self._estop_power_off_failed = False
-        self.transition(AppState.ESTOP)
+        with self._estop_lock:
+            if self._state == AppState.ESTOP:
+                return  # Already in e-stop, ignore duplicate
+            self._estop_power_off_failed = False
+            self._estop_run_was_active = bool(
+                self._runner and self._runner.is_running
+            )
+            self.transition(AppState.ESTOP)
 
         # Buzzer alarm
         if self._serial:
@@ -189,17 +211,60 @@ class StateMachine:
         # I2C power-off (only after test process is killed)
         self._emergency_power_off()
 
+        # Schedule auto-clear. The ESTOP modal is a transient alert, not a
+        # safety-gated interlock — the operator is not required to acknowledge.
+        self._arm_auto_clear()
+
+    def _arm_auto_clear(self, delay: float | None = None) -> None:
+        # Resolve the delay at call time so tests/tuning that monkeypatch the
+        # module constant take effect.
+        if delay is None:
+            delay = ESTOP_AUTO_CLEAR_SECONDS
+        if self._estop_clear_timer is not None:
+            self._estop_clear_timer.cancel()
+        t = threading.Timer(delay, self._auto_clear_estop)
+        t.daemon = True
+        self._estop_clear_timer = t
+        t.start()
+
+    def _auto_clear_estop(self) -> None:
+        """Timer callback. Transitions out of ESTOP to RESULTS_FAIL or IDLE."""
+        with self._estop_lock:
+            self._estop_clear_timer = None
+            if self._state != AppState.ESTOP:
+                return
+            if self._serial:
+                self._serial.send_ui_command("BUZZER OFF")
+            if self._estop_run_was_active:
+                # Abort counts as fail. No BUZZER FAIL — the ESTOP alarm was the cue.
+                self.transition(AppState.RESULTS_FAIL)
+            else:
+                # No run was in progress; drop all selection and return to idle.
+                self._selected_dut = None
+                self._selected_repo_path = None
+                self._selected_targets = None
+                self.transition(AppState.IDLE)
+
     def clear_estop(self) -> None:
-        """Clear e-stop state and return to idle."""
-        if self._state != AppState.ESTOP:
-            return
-        self._selected_dut = None
-        self._selected_repo_path = None
-        self._selected_targets = None
-        self._estop_power_off_failed = False
-        if self._serial:
-            self._serial.send_ui_command("BUZZER OFF")
-        self.transition(AppState.IDLE)
+        """Manual recovery path. Normally e-stop auto-clears; this is used
+        only when the UI surfaces a Force-clear control after an I2C
+        power-off failure (or as a safety net if the timer misfires).
+        Performs a hard reset of selection.
+        """
+        with self._estop_lock:
+            if self._state != AppState.ESTOP:
+                return
+            if self._estop_clear_timer is not None:
+                self._estop_clear_timer.cancel()
+                self._estop_clear_timer = None
+            self._selected_dut = None
+            self._selected_repo_path = None
+            self._selected_targets = None
+            self._estop_power_off_failed = False
+            self._estop_run_was_active = False
+            if self._serial:
+                self._serial.send_ui_command("BUZZER OFF")
+            self.transition(AppState.IDLE)
 
     def _emergency_power_off(self) -> None:
         """Disable all power via I2C. Called during e-stop."""
