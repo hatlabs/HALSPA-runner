@@ -35,7 +35,12 @@ class PicoConnection:
     port: serial.Serial
     device: str
     reader_thread: threading.Thread | None = None
+    watchdog_thread: threading.Thread | None = None
     stop_event: threading.Event = field(default_factory=threading.Event)
+    # Monotonic timestamp of the last byte received. Updated by the reader
+    # thread; read by the watchdog. Plain float writes are atomic in CPython,
+    # so no lock is needed around single-value reads/writes.
+    last_rx_monotonic: float = field(default_factory=time.monotonic)
 
 
 class SerialManager:
@@ -191,6 +196,11 @@ class SerialManager:
             daemon=True, name="ui-pico-reader",
         )
         conn.reader_thread.start()
+        conn.watchdog_thread = threading.Thread(
+            target=self._ui_watchdog_loop, args=(conn,),
+            daemon=True, name="ui-pico-watchdog",
+        )
+        conn.watchdog_thread.start()
 
         with self._lock:
             self._ui_pico = conn
@@ -236,15 +246,21 @@ class SerialManager:
         while not conn.stop_event.is_set():
             try:
                 raw = conn.port.readline()
-            except (serial.SerialException, OSError):
+            except (serial.SerialException, OSError, TypeError):
+                # TypeError arises if the port is closed (fd set to None) while
+                # readline is mid-os.read — shows up on shutdown.
+                if conn.stop_event.is_set():
+                    return
                 logger.warning("UI Pico disconnected")
                 with self._lock:
-                    self._ui_pico = None
+                    if self._ui_pico is conn:
+                        self._ui_pico = None
                 self._put_event({"type": "ui_pico_disconnected"})
                 return
 
             if not raw:
                 continue
+            conn.last_rx_monotonic = time.monotonic()
             line = raw.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
@@ -257,6 +273,44 @@ class SerialManager:
                 self._ui_response.set()
             elif line.startswith("=== INFO:"):
                 logger.debug("UI Pico info: %s", line)
+
+    def _ui_watchdog_loop(self, conn: PicoConnection) -> None:
+        """Detect CDC stalls: ping on idle, force reconnect on sustained silence.
+
+        The pipe stays open on a stalled USB CDC link, so readline() blocks
+        forever and no exception ever fires. The watchdog sends a PING after
+        HEARTBEAT_INTERVAL of silence, which forces traffic. If silence
+        persists beyond HEARTBEAT_INTERVAL * STALL_FACTOR, close the port so
+        the reader loop exits and the reconnect loop reattaches.
+        """
+        interval = config.UI_PICO_HEARTBEAT_INTERVAL
+        stall_after = interval * config.UI_PICO_HEARTBEAT_STALL_FACTOR
+        ping_sent_at: float | None = None
+        while not conn.stop_event.wait(timeout=interval):
+            since_rx = time.monotonic() - conn.last_rx_monotonic
+            if since_rx >= stall_after:
+                logger.warning(
+                    "UI Pico CDC stall: no data for %.1fs, forcing reconnect",
+                    since_rx,
+                )
+                try:
+                    conn.port.close()
+                except (serial.SerialException, OSError):
+                    pass
+                return
+            if since_rx < interval:
+                ping_sent_at = None
+                continue
+            # Idle but not yet stalled — poke the link.
+            if ping_sent_at is not None and time.monotonic() - ping_sent_at < interval:
+                continue
+            try:
+                conn.port.write(b"PING\n")
+                conn.port.flush()
+                ping_sent_at = time.monotonic()
+            except (serial.SerialException, OSError):
+                # Reader will see this and tear down; nothing more to do.
+                return
 
     def _reconnect_loop(self) -> None:
         """Periodically try to reconnect missing Picos."""
@@ -279,3 +333,5 @@ class SerialManager:
             pass
         if conn.reader_thread:
             conn.reader_thread.join(timeout=2)
+        if conn.watchdog_thread:
+            conn.watchdog_thread.join(timeout=2)
