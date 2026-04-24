@@ -19,5 +19,16 @@ SERIAL_RECONNECT_INTERVAL: float = float(os.environ.get(
     "HALSPA_RUNNER_SERIAL_RECONNECT_INTERVAL", "5.0"
 ))
 
+# UI Pico CDC liveness watchdog. We send a PING if no bytes have arrived for
+# HEARTBEAT_INTERVAL seconds, and force-reconnect if the silence exceeds
+# HEARTBEAT_INTERVAL * STALL_FACTOR — catches USB CDC stalls where the port
+# stays open but the pipe stops delivering bytes.
+UI_PICO_HEARTBEAT_INTERVAL: float = float(os.environ.get(
+    "HALSPA_RUNNER_UI_PICO_HEARTBEAT_INTERVAL", "5.0"
+))
+UI_PICO_HEARTBEAT_STALL_FACTOR: float = float(os.environ.get(
+    "HALSPA_RUNNER_UI_PICO_HEARTBEAT_STALL_FACTOR", "3.0"
+))
+
 # pytest unresponsive timeout (seconds)
 PYTEST_TIMEOUT: float = float(os.environ.get("HALSPA_RUNNER_PYTEST_TIMEOUT", "60.0"))

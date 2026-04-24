@@ -168,3 +168,44 @@ def test_send_ui_command_when_disconnected() -> None:
     result = mgr.send_ui_command("LED SOLID_GREEN")
     assert result is None
     mgr.stop()
+
+
+def test_ui_watchdog_pings_on_idle_and_closes_on_stall(
+    mock_comports: MagicMock, mock_serial_class: MagicMock,
+) -> None:
+    ui_port = _make_port_info(
+        device="/dev/ttyACM0", serial_number=_UI_PICO_SERIAL,
+    )
+    mock_comports.return_value = [ui_port]
+
+    mock_ser = MagicMock()
+    # Reader blocks until port.close() is called.
+    close_event = threading.Event()
+
+    def blocking_readline():
+        close_event.wait(timeout=2)
+        raise OSError("closed")
+
+    mock_ser.readline.side_effect = blocking_readline
+    mock_ser.close.side_effect = lambda: close_event.set()
+    mock_serial_class.return_value = mock_ser
+
+    # Tight watchdog timing: ping after 0.1s idle, stall after 0.2s.
+    with (
+        patch("halspa_runner.serial_manager.config.UI_PICO_HEARTBEAT_INTERVAL", 0.1),
+        patch("halspa_runner.serial_manager.config.UI_PICO_HEARTBEAT_STALL_FACTOR", 2.0),
+    ):
+        mgr = SerialManager()
+        mgr._discover()
+
+        # Wait for watchdog to send a PING first (>= 1 * interval idle).
+        time.sleep(0.2)
+        assert any(
+            call.args == (b"PING\n",) for call in mock_ser.write.call_args_list
+        ), "watchdog should send PING on idle"
+
+        # Wait past the stall threshold; watchdog should close the port.
+        time.sleep(0.3)
+        mock_ser.close.assert_called()
+
+        mgr.stop()
