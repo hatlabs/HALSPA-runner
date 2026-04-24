@@ -107,6 +107,12 @@ class TestRunnerScreen extends LitElement {
     .stat-fail {
       color: var(--red);
     }
+    .stat-fail--active {
+      background: var(--red);
+      color: var(--bg);
+      padding: 0 6px;
+      border-radius: 3px;
+    }
     .stat-skip {
       color: var(--yellow);
     }
@@ -357,7 +363,11 @@ class TestRunnerScreen extends LitElement {
   render() {
     const p = this.progress || {};
     const r = this.result || {};
-    const completed = (p.passed || 0) + (p.failed || 0) + (p.skipped || 0) + (p.errors || 0);
+    const passedCount = p.passed || 0;
+    const failedCount = p.failed || 0;
+    const skippedCount = p.skipped || 0;
+    const errorsCount = p.errors || 0;
+    const completed = passedCount + failedCount + skippedCount + errorsCount;
     const total = p.total || 0;
     const progressText = total > 0 ? `${completed} / ${total}` : completed > 0 ? `${completed} / ?` : "";
 
@@ -396,9 +406,9 @@ class TestRunnerScreen extends LitElement {
       </header>
 
       <div class="stats">
-        <span class="stat-pass">${p.passed || 0} passed</span>
-        <span class="stat-fail">${p.failed || 0} failed</span>
-        <span class="stat-skip">${p.skipped || 0} skipped</span>
+        <span class="stat-pass">${passedCount} passed</span>
+        <span class="stat-fail ${failedCount > 0 ? "stat-fail--active" : ""}">${failedCount} failed</span>
+        <span class="stat-skip">${skippedCount} skipped</span>
         <span class="stat-time">${Math.round(p.elapsed || r.elapsed || 0)}s</span>
       </div>
 
