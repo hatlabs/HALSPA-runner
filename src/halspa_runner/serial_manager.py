@@ -55,9 +55,11 @@ class PicoConnection:
     # never incremented. A second writer or a read-modify-write would need a
     # lock.
     last_rx_monotonic: float = field(default_factory=time.monotonic)
-    # Pings sent with no PONG seen since. Incremented by the watchdog, reset to
-    # zero by the reader on a PONG; same whole-value discipline as above.
-    pings_unanswered: int = 0
+    # Monotonic timestamp of the last PONG. Written only by the reader, read
+    # only by the watchdog, whole-value. The count of unanswered pings is a
+    # local in the watchdog loop: a shared counter would need a lock, because
+    # "+= 1" is a read-modify-write and could drop the reader's reset.
+    last_pong_monotonic: float = 0.0
 
 
 class SerialManager:
@@ -218,7 +220,17 @@ class SerialManager:
         # clears the slot when it still holds this connection, so a thread that
         # fails before the slot is published could otherwise leave a dead
         # connection installed that nothing ever reconnects.
+        #
+        # Refuse to publish once shutdown has begun: stop() has already taken
+        # its snapshot of the slots, so anything installed afterwards would keep
+        # its threads and its port alive past teardown.
         with self._lock:
+            if self._stop_event.is_set():
+                try:
+                    ser.close()
+                except (serial.SerialException, OSError):
+                    pass
+                return
             self._ui_pico = conn
         conn.reader_thread = threading.Thread(
             target=self._ui_reader_loop, args=(conn,),
@@ -251,6 +263,11 @@ class SerialManager:
                     sandwich_id = line.removeprefix("=== OK: ID ").strip()
                     conn = PicoConnection(port=ser, device=port_info.device)
                     with self._lock:
+                        # Same shutdown guard as the UI side: stop() has
+                        # already snapshotted the slots.
+                        if self._stop_event.is_set():
+                            ser.close()
+                            return
                         self._sandwich_type = sandwich_id
                         self._halspa_pico = conn
                     logger.info(
@@ -320,7 +337,7 @@ class SerialManager:
                 # The watchdog's own traffic. Keeping it out of the response
                 # slot stops it from satisfying an unrelated send_ui_command,
                 # and stops the slot growing without bound while idle.
-                conn.pings_unanswered = 0
+                conn.last_pong_monotonic = time.monotonic()
             elif line.startswith("=== OK:") or line.startswith("=== ERROR:"):
                 self._ui_response_lines.append(line)
                 self._ui_response.set()
@@ -340,16 +357,24 @@ class SerialManager:
         """
         interval = config.UI_PICO_HEARTBEAT_INTERVAL
         max_missed = config.UI_PICO_HEARTBEAT_MAX_MISSED
+        unanswered = 0
+        last_ping_at = 0.0
         while not conn.stop_event.wait(timeout=interval):
-            since_rx = time.monotonic() - conn.last_rx_monotonic
+            now = time.monotonic()
+            # A PONG stamped after our last ping clears the outstanding count.
+            # Checked here rather than reset by the reader so that the count
+            # stays local to this thread.
+            if unanswered and conn.last_pong_monotonic >= last_ping_at:
+                unanswered = 0
+            since_rx = now - conn.last_rx_monotonic
             if since_rx < interval:
-                conn.pings_unanswered = 0
+                unanswered = 0
                 continue
-            if conn.pings_unanswered >= max_missed:
+            if unanswered >= max_missed:
                 logger.warning(
                     "UI Pico CDC stall: %d pings unanswered, no data for %.1fs, "
                     "forcing reconnect",
-                    conn.pings_unanswered, since_rx,
+                    unanswered, since_rx,
                 )
                 self._teardown_ui(conn)
                 return
@@ -365,7 +390,8 @@ class SerialManager:
                 )
                 self._teardown_ui(conn)
                 return
-            conn.pings_unanswered += 1
+            last_ping_at = time.monotonic()
+            unanswered += 1
 
     def _reconnect_loop(self) -> None:
         """Periodically try to reconnect missing Picos."""

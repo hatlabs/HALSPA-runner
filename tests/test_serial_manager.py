@@ -448,3 +448,29 @@ def test_ui_reader_closes_port_on_disconnect(
     assert not mgr.ui_pico_connected
     mock_ser.close.assert_called()
     mgr.stop()
+
+
+def test_connect_does_not_publish_after_stop_has_begun(
+    mock_comports: MagicMock, mock_serial_class: MagicMock,
+) -> None:
+    """A discovery in flight when stop() starts must not install a connection.
+
+    stop() snapshots the slots, so anything published afterwards would keep its
+    threads and its port alive past teardown.
+    """
+    ui_port = _make_port_info(
+        device="/dev/ttyACM0", serial_number=_UI_PICO_SERIAL,
+    )
+    mock_comports.return_value = [ui_port]
+    mock_ser = _silent_ui_port(mock_serial_class)
+
+    mgr = SerialManager()
+    mgr._stop_event.set()  # Shutdown already under way.
+    mgr._discover()
+
+    assert not mgr.ui_pico_connected
+    mock_ser.close.assert_called()
+    assert not any(
+        t.name in ("ui-pico-reader", "ui-pico-watchdog") and t.is_alive()
+        for t in threading.enumerate()
+    )

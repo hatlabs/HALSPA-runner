@@ -1,5 +1,6 @@
 """Configuration for the HALSPA runner, driven by environment variables."""
 
+import math
 import os
 from pathlib import Path
 
@@ -18,6 +19,10 @@ def _float_env(name: str, default: str, minimum: float) -> float:
     try:
         value = float(os.environ.get(name, default))
     except ValueError:
+        return float(default)
+    if not math.isfinite(value):
+        # inf would disable the timer outright and nan defeats the clamp, since
+        # every comparison against it is false.
         return float(default)
     return max(value, minimum)
 
