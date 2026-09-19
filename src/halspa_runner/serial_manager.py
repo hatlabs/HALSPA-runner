@@ -1,8 +1,14 @@
 """Serial communication with UI Pico and HALSPA Pico over USB CDC.
 
-Runs a dedicated reader thread per connected Pico. The UI Pico is identified
-by its USB serial number "HALSPA-UI". The HALSPA Pico is identified by probing
-remaining CDC devices with the ID command.
+The UI Pico is identified by its USB serial number "HALSPA-UI" and gets two
+threads: a reader that demuxes incoming lines, and a watchdog that detects a
+stalled CDC link. It carries the start button, the e-stop and the buzzer, so a
+silently dead link there loses operator input.
+
+The HALSPA Pico is identified by probing the remaining CDC devices with the ID
+command. It is only read during that probe — nothing arrives from it
+unsolicited — so it has neither a reader nor a watchdog, and its
+PicoConnection leaves those fields unset.
 """
 
 import asyncio
@@ -27,6 +33,10 @@ _PICO_PID = 0x000A
 # USB serial number that identifies the UI Pico
 _UI_PICO_SERIAL = "HALSPA-UI"
 
+# The UI Pico's reply to PING. Consumed by the watchdog, never delivered to a
+# send_ui_command caller.
+_PONG_LINE = "=== OK: PONG"
+
 
 @dataclass
 class PicoConnection:
@@ -35,7 +45,21 @@ class PicoConnection:
     port: serial.Serial
     device: str
     reader_thread: threading.Thread | None = None
+    watchdog_thread: threading.Thread | None = None
     stop_event: threading.Event = field(default_factory=threading.Event)
+    # Serializes writes to the port. The watchdog and send_ui_command both
+    # write, and a split write would corrupt both lines.
+    write_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Monotonic timestamp of the last byte received. Written only by the reader
+    # thread, read only by the watchdog, and always assigned as a whole value —
+    # never incremented. A second writer or a read-modify-write would need a
+    # lock.
+    last_rx_monotonic: float = field(default_factory=time.monotonic)
+    # Monotonic timestamp of the last PONG. Written only by the reader, read
+    # only by the watchdog, whole-value. The count of unanswered pings is a
+    # local in the watchdog loop: a shared counter would need a lock, because
+    # "+= 1" is a read-modify-write and could drop the reader's reset.
+    last_pong_monotonic: float = 0.0
 
 
 class SerialManager:
@@ -86,19 +110,21 @@ class SerialManager:
     def stop(self) -> None:
         """Stop all threads and close serial ports."""
         self._stop_event.set()
-        if self._ui_pico:
-            self._ui_pico.stop_event.set()
-        if self._halspa_pico:
-            self._halspa_pico.stop_event.set()
+        # Take the slots first so a reader tearing down concurrently finds them
+        # empty and stays quiet, then join outside the lock — _teardown_ui
+        # acquires the same lock, so joining while holding it would deadlock.
+        with self._lock:
+            conns = [self._ui_pico, self._halspa_pico]
+            self._ui_pico = None
+            self._halspa_pico = None
+        for conn in conns:
+            if conn is not None:
+                conn.stop_event.set()
         if self._reconnect_thread:
             self._reconnect_thread.join(timeout=3)
-        with self._lock:
-            if self._ui_pico:
-                self._close_pico(self._ui_pico)
-                self._ui_pico = None
-            if self._halspa_pico:
-                self._close_pico(self._halspa_pico)
-                self._halspa_pico = None
+        for conn in conns:
+            if conn is not None:
+                self._close_pico(conn)
 
     def send_ui_command(self, cmd: str) -> list[str] | None:
         """Send a command to the UI Pico and wait for response.
@@ -115,9 +141,12 @@ class SerialManager:
         self._ui_response_lines.clear()
 
         try:
-            pico.port.write(f"{cmd}\n".encode())
-            pico.port.flush()
-        except (serial.SerialException, OSError):
+            with pico.write_lock:
+                pico.port.write(f"{cmd}\n".encode())
+                pico.port.flush()
+        except (serial.SerialException, OSError, TypeError):
+            # TypeError: the watchdog closed the port (fd set to None) between
+            # the is_open check and the write.
             logger.warning("Failed to send command to UI Pico")
             return None
 
@@ -148,19 +177,16 @@ class SerialManager:
             p for p in ports if p.vid == _PICO_VID and p.pid == _PICO_PID
         ]
 
+        # _discover runs on one thread at a time: start() calls it before the
+        # reconnect thread exists, and afterwards only that thread calls it. The
+        # connect helpers publish into the slot themselves, so no placeholder is
+        # needed — and a non-PicoConnection placeholder would crash every reader
+        # of the slot, send_ui_command included.
         for port_info in pico_ports:
             if port_info.serial_number == _UI_PICO_SERIAL:
-                with self._lock:
-                    if self._ui_pico is not None:
-                        continue
-                    # Claim the slot to prevent races with reconnect thread
-                    self._ui_pico = True  # type: ignore[assignment]
-                self._connect_ui_pico(port_info)
-            else:
-                with self._lock:
-                    if self._halspa_pico is not None:
-                        continue
-                    self._halspa_pico = True  # type: ignore[assignment]
+                if self._ui_pico is None:
+                    self._connect_ui_pico(port_info)
+            elif self._halspa_pico is None:
                 self._probe_halspa_pico(port_info)
 
         if not self._ui_pico:
@@ -175,25 +201,47 @@ class SerialManager:
     def _connect_ui_pico(self, port_info: ListPortInfo) -> None:
         """Open connection to the UI Pico and start reader thread."""
         try:
+            # write_timeout matters as much as the read timeout here: a device
+            # that stops draining its CDC OUT endpoint makes an untimed write
+            # block forever, which would park the watchdog in the very stall it
+            # exists to detect.
             ser = serial.Serial(
-                port_info.device, 115200, timeout=config.SERIAL_TIMEOUT,
+                port_info.device, 115200,
+                timeout=config.SERIAL_TIMEOUT,
+                write_timeout=config.SERIAL_WRITE_TIMEOUT,
             )
             ser.reset_input_buffer()
         except serial.SerialException:
             logger.warning("Failed to open UI Pico at %s", port_info.device)
-            with self._lock:
-                self._ui_pico = None
             return
 
         conn = PicoConnection(port=ser, device=port_info.device)
+        # Publish the connection before starting the threads. Teardown only
+        # clears the slot when it still holds this connection, so a thread that
+        # fails before the slot is published could otherwise leave a dead
+        # connection installed that nothing ever reconnects.
+        #
+        # Refuse to publish once shutdown has begun: stop() has already taken
+        # its snapshot of the slots, so anything installed afterwards would keep
+        # its threads and its port alive past teardown.
+        with self._lock:
+            if self._stop_event.is_set():
+                try:
+                    ser.close()
+                except (serial.SerialException, OSError):
+                    pass
+                return
+            self._ui_pico = conn
         conn.reader_thread = threading.Thread(
             target=self._ui_reader_loop, args=(conn,),
             daemon=True, name="ui-pico-reader",
         )
         conn.reader_thread.start()
-
-        with self._lock:
-            self._ui_pico = conn
+        conn.watchdog_thread = threading.Thread(
+            target=self._ui_watchdog_loop, args=(conn,),
+            daemon=True, name="ui-pico-watchdog",
+        )
+        conn.watchdog_thread.start()
         logger.info("UI Pico connected at %s", port_info.device)
 
     def _probe_halspa_pico(self, port_info: ListPortInfo) -> None:
@@ -215,6 +263,11 @@ class SerialManager:
                     sandwich_id = line.removeprefix("=== OK: ID ").strip()
                     conn = PicoConnection(port=ser, device=port_info.device)
                     with self._lock:
+                        # Same shutdown guard as the UI side: stop() has
+                        # already snapshotted the slots.
+                        if self._stop_event.is_set():
+                            ser.close()
+                            return
                         self._sandwich_type = sandwich_id
                         self._halspa_pico = conn
                     logger.info(
@@ -231,20 +284,48 @@ class SerialManager:
             with self._lock:
                 self._halspa_pico = None
 
+    def _teardown_ui(self, conn: PicoConnection) -> None:
+        """Close a UI connection and release its slot. Safe from any thread.
+
+        Whoever notices the failure calls this — the reader on an exception, the
+        watchdog on an unanswered-ping stall. Recovery must not depend on the
+        reader waking up, because a stalled link is exactly when it might not.
+        The disconnect event is emitted only by the caller that still owned the
+        slot, so a connection already retired by stop() stays silent.
+        """
+        conn.stop_event.set()
+        try:
+            conn.port.cancel_read()
+        except (serial.SerialException, OSError, AttributeError, NotImplementedError):
+            pass
+        try:
+            conn.port.close()
+        except (serial.SerialException, OSError):
+            pass
+        with self._lock:
+            owned = self._ui_pico is conn
+            if owned:
+                self._ui_pico = None
+        if owned:
+            self._put_event({"type": "ui_pico_disconnected"})
+
     def _ui_reader_loop(self, conn: PicoConnection) -> None:
         """Read lines from UI Pico, demux events vs command responses."""
         while not conn.stop_event.is_set():
             try:
                 raw = conn.port.readline()
-            except (serial.SerialException, OSError):
+            except (serial.SerialException, OSError, TypeError):
+                # TypeError arises if the port is closed (fd set to None) while
+                # readline is mid-os.read — shows up on shutdown.
+                if conn.stop_event.is_set():
+                    return
                 logger.warning("UI Pico disconnected")
-                with self._lock:
-                    self._ui_pico = None
-                self._put_event({"type": "ui_pico_disconnected"})
+                self._teardown_ui(conn)
                 return
 
             if not raw:
                 continue
+            conn.last_rx_monotonic = time.monotonic()
             line = raw.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
@@ -252,11 +333,65 @@ class SerialManager:
             if line.startswith("=== EVENT: "):
                 event_name = line.removeprefix("=== EVENT: ").strip()
                 self._put_event({"type": "button", "event": event_name})
+            elif line == _PONG_LINE:
+                # The watchdog's own traffic. Keeping it out of the response
+                # slot stops it from satisfying an unrelated send_ui_command,
+                # and stops the slot growing without bound while idle.
+                conn.last_pong_monotonic = time.monotonic()
             elif line.startswith("=== OK:") or line.startswith("=== ERROR:"):
                 self._ui_response_lines.append(line)
                 self._ui_response.set()
             elif line.startswith("=== INFO:"):
                 logger.debug("UI Pico info: %s", line)
+
+    def _ui_watchdog_loop(self, conn: PicoConnection) -> None:
+        """Detect CDC stalls by pinging an idle link and counting silent replies.
+
+        A stalled USB CDC pipe stays open and delivers nothing, so the reader
+        never raises and the connection looks healthy forever. After
+        HEARTBEAT_INTERVAL of silence this sends PING; the reader zeroes the
+        counter when the PONG arrives. Once HEARTBEAT_MAX_MISSED pings in a row
+        go unanswered the link is torn down and the reconnect loop reattaches.
+        Counting unanswered pings rather than elapsed silence means a single
+        lost reply cannot force a reconnect on its own.
+        """
+        interval = config.UI_PICO_HEARTBEAT_INTERVAL
+        max_missed = config.UI_PICO_HEARTBEAT_MAX_MISSED
+        unanswered = 0
+        last_ping_at = 0.0
+        while not conn.stop_event.wait(timeout=interval):
+            now = time.monotonic()
+            # A PONG stamped after our last ping clears the outstanding count.
+            # Checked here rather than reset by the reader so that the count
+            # stays local to this thread.
+            if unanswered and conn.last_pong_monotonic >= last_ping_at:
+                unanswered = 0
+            since_rx = now - conn.last_rx_monotonic
+            if since_rx < interval:
+                unanswered = 0
+                continue
+            if unanswered >= max_missed:
+                logger.warning(
+                    "UI Pico CDC stall: %d pings unanswered, no data for %.1fs, "
+                    "forcing reconnect",
+                    unanswered, since_rx,
+                )
+                self._teardown_ui(conn)
+                return
+            try:
+                with conn.write_lock:
+                    conn.port.write(b"PING\n")
+                    conn.port.flush()
+            except (serial.SerialException, OSError, TypeError):
+                # Includes SerialTimeoutException: the device has stopped
+                # draining the port, which is a stall in its own right.
+                logger.warning(
+                    "UI Pico write failed, forcing reconnect: %s", conn.device,
+                )
+                self._teardown_ui(conn)
+                return
+            last_ping_at = time.monotonic()
+            unanswered += 1
 
     def _reconnect_loop(self) -> None:
         """Periodically try to reconnect missing Picos."""
@@ -274,8 +409,14 @@ class SerialManager:
     def _close_pico(conn: PicoConnection) -> None:
         conn.stop_event.set()
         try:
+            conn.port.cancel_read()
+        except (serial.SerialException, OSError, AttributeError, NotImplementedError):
+            pass
+        try:
             conn.port.close()
         except (serial.SerialException, OSError):
             pass
         if conn.reader_thread:
             conn.reader_thread.join(timeout=2)
+        if conn.watchdog_thread:
+            conn.watchdog_thread.join(timeout=2)
