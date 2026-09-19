@@ -55,7 +55,11 @@ All settings via environment variables:
 |----------|---------|---------|
 | `HALSPA_RUNNER_TEST_DIR` | `~/halspa-runner-duts` | Directory to scan for `*-tests` repos (use symlinks) |
 | `HALSPA_RUNNER_PORT` | `8080` | FastAPI server port |
-| `HALSPA_RUNNER_SERIAL_TIMEOUT` | `2.0` | Serial command timeout (seconds) |
+| `HALSPA_RUNNER_SERIAL_TIMEOUT` | `2.0` | Serial read and command timeout (seconds) |
+| `HALSPA_RUNNER_SERIAL_WRITE_TIMEOUT` | `1.0` | Serial write timeout (seconds); bounds a write to a device that has stopped draining its port |
+| `HALSPA_RUNNER_SERIAL_RECONNECT_INTERVAL` | `5.0` | How often to rescan for missing Picos (seconds) |
+| `HALSPA_RUNNER_UI_PICO_HEARTBEAT_INTERVAL` | `5.0` | Idle time before the UI Pico watchdog sends a PING (seconds) |
+| `HALSPA_RUNNER_UI_PICO_HEARTBEAT_MAX_MISSED` | `2` | Consecutive unanswered pings before the UI Pico link is force-reconnected |
 | `HALSPA_RUNNER_PYTEST_TIMEOUT` | `60.0` | pytest unresponsive timeout (seconds) |
 
 ## API
