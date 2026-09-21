@@ -161,9 +161,11 @@ def test_ui_reader_demuxes_events(
     # Give the reader thread time to process the event
     time.sleep(0.3)
 
-    assert not mgr._event_queue.empty()
-    event = mgr._event_queue.get_nowait()
-    assert event == {"type": "button", "event": "BUTTON_START"}
+    events = []
+    while not mgr._event_queue.empty():
+        events.append(mgr._event_queue.get_nowait())
+    # The connect event is queued first, before the reader thread starts.
+    assert {"type": "button", "event": "BUTTON_START"} in events
     mgr.stop()
 
 
@@ -474,3 +476,40 @@ def test_connect_does_not_publish_after_stop_has_begun(
         t.name in ("ui-pico-reader", "ui-pico-watchdog") and t.is_alive()
         for t in threading.enumerate()
     )
+
+
+def test_connect_announces_the_ui_pico_link(
+    mock_comports: MagicMock, mock_serial_class: MagicMock,
+) -> None:
+    ui_port = _make_port_info(device="/dev/ttyACM0", serial_number=_UI_PICO_SERIAL)
+    mock_comports.return_value = [ui_port]
+    mock_serial_class.return_value = _silent_ui_port(mock_serial_class)
+
+    mgr = SerialManager()
+    mgr._discover()
+
+    events = []
+    while not mgr._event_queue.empty():
+        events.append(mgr._event_queue.get_nowait())
+    assert {"type": "ui_pico_connected"} in events, (
+        "the frontend cannot clear its banner without a reconnect event"
+    )
+    mgr.stop()
+
+
+def test_failed_connect_announces_nothing(
+    mock_comports: MagicMock, mock_serial_class: MagicMock,
+) -> None:
+    ui_port = _make_port_info(device="/dev/ttyACM0", serial_number=_UI_PICO_SERIAL)
+    mock_comports.return_value = [ui_port]
+    mock_serial_class.side_effect = serial.SerialException("port busy")
+
+    mgr = SerialManager()
+    mgr._discover()
+
+    events = []
+    while not mgr._event_queue.empty():
+        events.append(mgr._event_queue.get_nowait())
+    assert {"type": "ui_pico_connected"} not in events
+    assert not mgr.ui_pico_connected
+    mgr.stop()

@@ -232,6 +232,11 @@ class SerialManager:
                     pass
                 return
             self._ui_pico = conn
+        # Announce before the threads start. A reader that fails on its first
+        # read tears the link down and queues ui_pico_disconnected; queueing
+        # the connect event after that would leave every client showing a link
+        # that is already gone.
+        self._put_event({"type": "ui_pico_connected"})
         conn.reader_thread = threading.Thread(
             target=self._ui_reader_loop, args=(conn,),
             daemon=True, name="ui-pico-reader",

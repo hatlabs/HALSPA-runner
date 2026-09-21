@@ -18,11 +18,13 @@ class AppShell extends LitElement {
     outputLines: { type: Array },
     result: { type: Object },
     powerOffFailed: { type: Boolean },
+    uiPicoConnected: { type: Boolean },
   };
 
   static styles = css`
     :host {
       display: block;
+      box-sizing: border-box;
       width: 100vw;
       height: 100vh;
       background: var(--bg);
@@ -49,6 +51,24 @@ class AppShell extends LitElement {
       border-top-color: var(--accent);
       border-radius: 50%;
       animation: spin 1s linear infinite;
+    }
+
+    .link-down {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      box-sizing: border-box;
+      height: var(--link-banner-height);
+      line-height: 20px;
+      background: var(--red);
+      color: white;
+      padding: 10px 16px;
+      text-align: center;
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      z-index: 200;
     }
 
     .disconnected {
@@ -82,6 +102,10 @@ class AppShell extends LitElement {
     this._currentTestStartIndex = 0;
     this.result = null;
     this.powerOffFailed = false;
+    // Assume the link is up until the first message says otherwise: the
+    // banner would otherwise flash on every page load. The websocket sends
+    // the real value in its initial state_change.
+    this.uiPicoConnected = true;
     this._hasAutoSelected = false;
     this._dutsLoaded = false;
     this._browsePath = "";
@@ -134,6 +158,10 @@ class AppShell extends LitElement {
 
   _onMessage(e) {
     const data = e.detail;
+
+    if (data.ui_pico_connected !== undefined) {
+      this.uiPicoConnected = data.ui_pico_connected;
+    }
 
     if (data.type === "state_change") {
       if (data.state === "estop") {
@@ -189,6 +217,14 @@ class AppShell extends LitElement {
       this.progress = data;
     } else if (data.type === "test_complete") {
       this.result = data;
+    } else if (data.type === "ui_pico_disconnected") {
+      this.uiPicoConnected = false;
+    } else if (data.type === "ui_pico_connected") {
+      this.uiPicoConnected = true;
+    } else if (data.type === "start_refused") {
+      // The link dropped between rendering the button and the click. Mark it
+      // down so the banner appears and the screen releases its Starting state.
+      this.uiPicoConnected = false;
     }
   }
 
@@ -264,7 +300,7 @@ class AppShell extends LitElement {
 
     if (state === "results_pass" || state === "results_fail" || state === "running") {
       return html`
-        ${this._renderDisconnected()}
+        ${this._renderStatusBanners()}
         <test-runner-screen
           .progress=${this.progress}
           .outputLines=${this.outputLines}
@@ -285,11 +321,12 @@ class AppShell extends LitElement {
         this.selectedDut = null;
       } else if (dut) {
         return html`
-          ${this._renderDisconnected()}
+          ${this._renderStatusBanners()}
           <test-selection
             .dut=${dut}
             .initialPath=${this._browsePath}
             .savedTargets=${this._selectedTargets}
+            .linkUp=${this.uiPicoConnected}
             @start-tests=${this._onStartTests}
             @select-targets=${this._onSelectTargets}
             @browse=${this._onBrowse}
@@ -301,7 +338,7 @@ class AppShell extends LitElement {
     }
 
     return html`
-      ${this._renderDisconnected()}
+      ${this._renderStatusBanners()}
       <main-menu
         .duts=${this.duts}
         .sandwichType=${this.sandwichType}
@@ -311,9 +348,20 @@ class AppShell extends LitElement {
     `;
   }
 
-  _renderDisconnected() {
-    if (this.connected) return null;
-    return html`<div class="disconnected">Disconnected</div>`;
+  updated() {
+    this.classList.toggle("link-down", this.connected && !this.uiPicoConnected);
+  }
+
+  _renderStatusBanners() {
+    if (!this.connected) {
+      return html`<div class="disconnected">Disconnected</div>`;
+    }
+    if (this.uiPicoConnected) return null;
+    return html`
+      <div class="link-down" role="alert">
+        UI Pico link down — E-Stop button is not active
+      </div>
+    `;
   }
 }
 

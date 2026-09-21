@@ -27,6 +27,16 @@ state_machine: StateMachine | None = None
 test_runner: PytestRunner | None = None
 
 
+_LINK_DOWN_ERROR = (
+    "UI Pico link is down — the E-STOP button cannot reach the runner"
+)
+
+
+def _ui_pico_link_up() -> bool:
+    """Report whether the physical controls, E-STOP included, are reachable."""
+    return serial_manager is not None and serial_manager.ui_pico_connected
+
+
 class StartRequest(BaseModel):
     dut: str
     categories: list[str] | None = None
@@ -82,6 +92,7 @@ async def lifespan(app: FastAPI):
             "sandwich_type": serial_manager.sandwich_type if serial_manager else None,
             "sandwich_detection_complete": serial_manager.sandwich_detection_complete if serial_manager else False,
             "selected_dut": state_machine.selected_dut if state_machine else None,
+            "ui_pico_connected": serial_manager.ui_pico_connected if serial_manager else False,
         }
         if new == AppState.ESTOP and state_machine:
             msg["power_off_failed"] = state_machine.estop_power_off_failed
@@ -114,8 +125,8 @@ async def _consume_events() -> None:
 
         if event.get("type") == "button":
             await _handle_button(event["event"])
-        elif event.get("type") == "ui_pico_disconnected":
-            await ws_manager.broadcast({"type": "ui_pico_disconnected"})
+        elif event.get("type") in ("ui_pico_disconnected", "ui_pico_connected"):
+            await ws_manager.broadcast({"type": event["type"]})
         elif event.get("type") in ("sandwich_detected", "sandwich_detection_complete"):
             await ws_manager.broadcast({
                 "type": "state_change",
@@ -124,6 +135,7 @@ async def _consume_events() -> None:
                 "sandwich_type": serial_manager.sandwich_type,
                 "sandwich_detection_complete": serial_manager.sandwich_detection_complete,
                 "selected_dut": state_machine.selected_dut if state_machine else None,
+                "ui_pico_connected": serial_manager.ui_pico_connected,
             })
 
 
@@ -228,6 +240,9 @@ async def start_tests(req: StartRequest) -> JSONResponse:
     if state_machine.state == AppState.RUNNING:
         return JSONResponse({"error": "Tests already running"}, status_code=409)
 
+    if not _ui_pico_link_up():
+        return JSONResponse({"error": _LINK_DOWN_ERROR}, status_code=409)
+
     duts = discover_duts()
     matching = [d for d in duts if d.name == req.dut]
     if not matching:
@@ -290,6 +305,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         "sandwich_type": serial_manager.sandwich_type if serial_manager else None,
         "sandwich_detection_complete": serial_manager.sandwich_detection_complete if serial_manager else False,
         "selected_dut": state_machine.selected_dut if state_machine else None,
+        "ui_pico_connected": serial_manager.ui_pico_connected if serial_manager else False,
     })
 
     try:
@@ -309,6 +325,13 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             elif msg_type == "deselect":
                 state_machine.deselect_dut()
             elif msg_type == "start":
+                if not _ui_pico_link_up():
+                    await ws.send_json({
+                        "type": "start_refused",
+                        "reason": "ui_pico_disconnected",
+                        "message": _LINK_DOWN_ERROR,
+                    })
+                    continue
                 dut = data.get("dut")
                 targets = data.get("targets")
                 # If DUT not yet selected in state machine, select it now
@@ -350,6 +373,18 @@ async def _start_test_run() -> None:
             "status": "error",
             "exit_code": None,
             "passed": 0, "failed": 0, "skipped": 0, "elapsed": 0,
+        })
+        return
+
+    # Every caller funnels through here, and the button path has no entry
+    # check of its own. This does not guarantee the link stays up — nothing
+    # can — it only keeps a run from starting in a state already known bad.
+    if not _ui_pico_link_up():
+        logger.warning("Refusing to start a run: UI Pico link is down")
+        await ws_manager.broadcast({
+            "type": "start_refused",
+            "reason": "ui_pico_disconnected",
+            "message": _LINK_DOWN_ERROR,
         })
         return
 

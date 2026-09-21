@@ -14,13 +14,14 @@ class TestSelection extends LitElement {
     selected: { type: Object },
     starting: { type: Boolean },
     savedTargets: { type: Array },
+    linkUp: { type: Boolean },
   };
 
   static styles = css`
     :host {
       display: flex;
       flex-direction: column;
-      height: 100vh;
+      height: 100%;
       padding: 24px;
       box-sizing: border-box;
     }
@@ -278,6 +279,7 @@ class TestSelection extends LitElement {
     this.selected = new Set();
     this.starting = false;
     this.savedTargets = null;
+    this.linkUp = true;
     this._fetchGen = 0;
   }
 
@@ -286,6 +288,10 @@ class TestSelection extends LitElement {
       this.currentPath = this.initialPath || "";
       this.starting = false;
       this._fetchEntries();
+    }
+    if (changed.has("linkUp") && !this.linkUp) {
+      // A run refused mid-click must not leave the button reading "Starting…".
+      this.starting = false;
     }
     if (changed.has("currentPath") && !changed.has("dut")) {
       this._fetchEntries();
@@ -396,7 +402,7 @@ class TestSelection extends LitElement {
   }
 
   _start() {
-    if (this.starting) return;
+    if (this.starting || !this.linkUp) return;
     this.starting = true;
 
     this.dispatchEvent(
@@ -453,12 +459,16 @@ class TestSelection extends LitElement {
       <footer>
         <button
           class="start-btn"
-          ?disabled=${this.starting || this.loading}
+          ?disabled=${this.starting || this.loading || !this.linkUp}
           @pointerdown=${TouchFeedback.onPress}
           @pointerup=${TouchFeedback.onRelease}
           @pointerleave=${TouchFeedback.onRelease}
           @click=${this._start}
-        >${this.starting ? "Starting…" : "Start Tests"}</button>
+        >${!this.linkUp
+          ? "UI Pico Link Down"
+          : this.starting
+            ? "Starting…"
+            : "Start Tests"}</button>
       </footer>
     `;
   }
