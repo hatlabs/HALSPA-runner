@@ -161,9 +161,11 @@ def test_ui_reader_demuxes_events(
     # Give the reader thread time to process the event
     time.sleep(0.3)
 
-    assert not mgr._event_queue.empty()
-    event = mgr._event_queue.get_nowait()
-    assert event == {"type": "button", "event": "BUTTON_START"}
+    events = []
+    while not mgr._event_queue.empty():
+        events.append(mgr._event_queue.get_nowait())
+    # The connect event is queued first, before the reader thread starts.
+    assert {"type": "button", "event": "BUTTON_START"} in events
     mgr.stop()
 
 
