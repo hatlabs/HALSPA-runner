@@ -79,8 +79,9 @@ reviews:
         between the event and the power-off call.
     - path: "tests/**/*.py"
       instructions: |
-        pytest-asyncio runs in auto mode, so an async test needs no
-        `@pytest.mark.asyncio` marker.
+        pytest-asyncio runs in auto mode, so `@pytest.mark.asyncio` is
+        optional, but every async test here carries it. Keep it for consistency;
+        neither adding nor removing it is a review finding.
 
         Serial tests drive real threads against mocked ports. They poll with the
         `_wait_until` helper rather than sleeping for a fixed period. Do not
