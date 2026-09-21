@@ -1,0 +1,140 @@
+# yaml-language-server: $schema=https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+
+language: en-GB
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+
+  path_filters:
+    - "!.claude/**"
+    - "!uv.lock"
+    - "!frontend/package-lock.json"
+
+  path_instructions:
+    - path: "src/halspa_runner/serial_manager.py"
+      instructions: |
+        This module runs a reader thread and a watchdog thread per connection,
+        plus one reconnect thread, against ports that can vanish mid-write. The
+        following are deliberate and each one fixes a defect that was found in
+        review. Do not propose a simplification that undoes them.
+
+        The watchdog's unanswered-ping count is local to the watchdog loop. A
+        counter on the shared connection would need a lock, because `+= 1` is a
+        read-modify-write that can drop the reader's reset.
+
+        `stop()` takes the connection slots under the lock, then joins and closes
+        outside it. Teardown acquires the same lock, so joining while holding it
+        deadlocks.
+
+        A connection is published into its slot before its threads start, and the
+        publish is refused once `_stop_event` is set. `stop()` has already taken
+        its snapshot by then, so anything installed afterwards would outlive
+        teardown with its port open.
+
+        `serial.Serial` is opened with both `timeout` and `write_timeout`. An
+        untimed write blocks forever on a device that has stopped draining its
+        CDC endpoint, which would park the watchdog in the very stall it exists
+        to detect.
+
+        Teardown clears a slot only when it still holds that same connection
+        object. Identity, not truthiness, is what makes a late teardown safe.
+    - path: "src/halspa_runner/config.py"
+      instructions: |
+        Every timer here is read from the environment and clamped to a floor, and
+        non-finite values fall back to the default. `inf` would stop a watchdog
+        waking at all, and `nan` defeats a `max()` clamp because every comparison
+        against it is false. Do not suggest removing either guard.
+
+        The `HALSPA_RUNNER_*` variable names are set in `deploy/` and documented
+        in `CLAUDE.md`, and jigs in the field carry them. Treat a rename as a
+        breaking change even when the current name is inconsistent.
+    - path: "frontend/src/**/*.js"
+      instructions: |
+        Lit 3 web components, served full-screen in Chromium kiosk mode on a
+        touch display. There is no build-time framework beyond Vite and no
+        TypeScript.
+
+        `styles.css` is a document stylesheet, and its `*` reset outranks a
+        component's own `:host()` rules. Styling that lands on a host element —
+        `app-shell.link-down` is the current case — has to live in `styles.css`
+        for that reason. Do not propose moving it into the component.
+
+        Screens size themselves with `height: 100%`, not `100vh`, so that
+        `app-shell` can reserve room for the fixed link-down banner. A screen
+        that claims the full viewport covers or overflows that banner.
+
+        Touch targets keep the 48px minimum set on `button` in `styles.css`.
+
+        Websocket messages arrive as untyped JSON from the backend. A handler
+        that reads a field the backend never sends is a real defect; flag it.
+    - path: "src/halspa_runner/state.py"
+      instructions: |
+        The e-stop path. A press reaches this state machine over USB CDC from the
+        UI Pico, so the software stop is indication and convenience, not a
+        protective stop. Review it for defects that would drop or delay a press.
+        Do not propose changes that put more work, more retries or more waiting
+        between the event and the power-off call.
+    - path: "tests/**/*.py"
+      instructions: |
+        pytest-asyncio runs in auto mode, so an async test needs no
+        `@pytest.mark.asyncio` marker.
+
+        Serial tests drive real threads against mocked ports. They poll with the
+        `_wait_until` helper rather than sleeping for a fixed period. Do not
+        suggest replacing a poll with a sleep, and do not suggest raising a
+        timeout to make a flaky test pass; a test that needs that is hiding a
+        missing synchronisation point.
+
+        Fixtures that assert teardown actually happened are deliberately strict.
+        They were tightened after a mutation escaped a looser version.
+    - path: "deploy/**"
+      instructions: |
+        Shell and systemd units that run on the jig's Raspberry Pi. Flag a step
+        that is not idempotent, or that leaves the service stopped on a
+        non-fatal error.
+
+        This repository is public. Flag any literal hostname, IP address,
+        internal URL or account name of ours that appears here. A vessel name, an
+        MMSI or a place name in test data is not covered by this rule.
+    - path: "docs/solutions/**/*.md"
+      instructions: |
+        Engineering notes that deliberately record the problem, the evidence and
+        the approaches that failed. That history is the point of the file. Do not
+        apply the current-state rule for published documentation here.
+    - path: "CLAUDE.md"
+      instructions: |
+        Describes how the project works now. The configuration and API tables
+        must match `src/halspa_runner/config.py` and `src/halspa_runner/app.py`;
+        flag a row that disagrees with the code. Do not ask for a changelog
+        entry, a "what changed in this PR" section, or a rejected-alternatives
+        discussion.
+
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+
+  tools:
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false
+    ruff:
+      enabled: true
+    shellcheck:
+      enabled: true
+    yamllint:
+      enabled: true
+    actionlint:
+      enabled: true
+    gitleaks:
+      enabled: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - CLAUDE.md
+      - docs/solutions/**/*.md

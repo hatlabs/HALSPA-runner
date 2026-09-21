@@ -31,11 +31,7 @@ Touchscreen test runner for HALSPA hardware test jigs. FastAPI backend + Lit fro
 - `screens/test-selection.js` — Test category picker
 - `screens/test-runner-screen.js` — Live test output with progress counters
 - `screens/results-summary.js` — Pass/fail summary
-- `screens/estop-screen.js` — E-stop overlay
-
-### Documented Solutions (`docs/solutions/`)
-
-Past problem solutions and best practices, organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas.
+- `screens/estop-modal.js` — E-stop overlay
 
 ### Deployment (`deploy/`)
 
