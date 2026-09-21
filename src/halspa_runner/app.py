@@ -376,6 +376,18 @@ async def _start_test_run() -> None:
         })
         return
 
+    # Every caller funnels through here, and the button path has no entry
+    # check of its own. This does not guarantee the link stays up — nothing
+    # can — it only keeps a run from starting in a state already known bad.
+    if not _ui_pico_link_up():
+        logger.warning("Refusing to start a run: UI Pico link is down")
+        await ws_manager.broadcast({
+            "type": "start_refused",
+            "reason": "ui_pico_disconnected",
+            "message": _LINK_DOWN_ERROR,
+        })
+        return
+
     state_machine.start_running()
 
     async def on_line(line: str) -> None:

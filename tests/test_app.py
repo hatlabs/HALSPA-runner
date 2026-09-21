@@ -348,3 +348,24 @@ async def test_link_events_reach_the_websocket_clients() -> None:
     app_module.serial_manager = None
     assert {"type": "ui_pico_disconnected"} in sent
     assert {"type": "ui_pico_connected"} in sent
+
+
+async def test_every_start_path_checks_the_link(
+    client: TestClient, mock_serial: MagicMock, mock_state: StateMachine,
+) -> None:
+    """The button path reaches _start_test_run directly, with no entry check."""
+    mock_serial.ui_pico_connected = False
+    mock_state.select_dut("HALPI2", Path("/tmp/HALPI2-tests"))
+
+    sent: list[dict] = []
+    with patch.object(
+        app_module.ws_manager, "broadcast", new=AsyncMock(side_effect=lambda m: sent.append(m)),
+    ):
+        await app_module._start_test_run()
+
+    assert mock_state.state != AppState.RUNNING
+    assert sent == [{
+        "type": "start_refused",
+        "reason": "ui_pico_disconnected",
+        "message": app_module._LINK_DOWN_ERROR,
+    }]
