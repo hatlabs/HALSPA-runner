@@ -50,7 +50,7 @@ SERIAL_RECONNECT_INTERVAL: float = _float_env(
 # reconnected. Counting unanswered pings rather than elapsed silence means one
 # lost reply cannot trigger a reconnect on its own.
 UI_PICO_HEARTBEAT_INTERVAL: float = _float_env(
-    "HALSPA_RUNNER_UI_PICO_HEARTBEAT_INTERVAL", "5.0", 0.05
+    "HALSPA_RUNNER_UI_PICO_HEARTBEAT_INTERVAL", "2.5", 0.05
 )
 UI_PICO_HEARTBEAT_MAX_MISSED: int = _int_env(
     "HALSPA_RUNNER_UI_PICO_HEARTBEAT_MAX_MISSED", "2", 1

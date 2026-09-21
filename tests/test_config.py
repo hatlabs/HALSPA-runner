@@ -19,7 +19,7 @@ def test_non_finite_timer_falls_back_to_the_default(
     monkeypatch.setenv("HALSPA_RUNNER_UI_PICO_HEARTBEAT_INTERVAL", raw)
     reloaded = importlib.reload(config)
     try:
-        assert reloaded.UI_PICO_HEARTBEAT_INTERVAL == pytest.approx(5.0)
+        assert reloaded.UI_PICO_HEARTBEAT_INTERVAL == pytest.approx(2.5)
     finally:
         monkeypatch.delenv("HALSPA_RUNNER_UI_PICO_HEARTBEAT_INTERVAL")
         importlib.reload(config)
