@@ -243,6 +243,7 @@ class SerialManager:
         )
         conn.watchdog_thread.start()
         logger.info("UI Pico connected at %s", port_info.device)
+        self._put_event({"type": "ui_pico_connected"})
 
     def _probe_halspa_pico(self, port_info: ListPortInfo) -> None:
         """Try to identify a HALSPA Pico by sending the ID command."""
