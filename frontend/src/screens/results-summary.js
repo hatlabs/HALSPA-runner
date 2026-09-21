@@ -12,7 +12,7 @@ class ResultsSummary extends LitElement {
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      height: 100vh;
+      height: 100%;
       padding: 32px;
       gap: 24px;
     }

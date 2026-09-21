@@ -9,6 +9,7 @@
   --green: #2ecc71;
   --red: #e74c3c;
   --yellow: #f39c12;
+  --link-banner-height: 40px;
   --font-mono: "SF Mono", "Cascadia Code", "Fira Code", monospace;
 }
 
@@ -30,6 +31,13 @@ body {
   -webkit-user-select: none;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* The link-down banner is fixed. Reserve its height on the shell, or it
+   covers the top of whichever screen is mounted. This lives here rather than
+   in the shell's own styles because the `*` reset above outranks :host(). */
+app-shell.link-down {
+  padding-top: var(--link-banner-height);
 }
 
 button {

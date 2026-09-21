@@ -14,7 +14,7 @@ class MainMenu extends LitElement {
     :host {
       display: flex;
       flex-direction: column;
-      height: 100vh;
+      height: 100%;
       padding: 24px;
       box-sizing: border-box;
     }
