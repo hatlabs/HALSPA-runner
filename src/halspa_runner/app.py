@@ -26,6 +26,9 @@ serial_manager: SerialManager | None = None
 state_machine: StateMachine | None = None
 test_runner: PytestRunner | None = None
 
+# Node IDs that failed in the last completed run, offered for retry
+retry_targets: list[str] = []
+
 
 _LINK_DOWN_ERROR = (
     "UI Pico link is down — the E-STOP button cannot reach the runner"
@@ -352,19 +355,33 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 state_machine.handle_estop()
             elif msg_type == "clear_estop":
                 state_machine.clear_estop()
+            elif msg_type == "retry_failed":
+                asyncio.create_task(_retry_failed())
             elif msg_type == "dismiss":
                 state_machine.dismiss_results()
     except WebSocketDisconnect:
         ws_manager.disconnect(ws)
 
 
-async def _start_test_run() -> None:
-    """Start a test run using DUT + targets from state machine."""
+async def _retry_failed() -> None:
+    """Rerun the tests that failed in the last run, leaving the selection as is."""
+    assert state_machine is not None
+    if state_machine.state != AppState.RESULTS_FAIL or not retry_targets:
+        return
+    await _start_test_run(targets_override=list(retry_targets))
+
+
+async def _start_test_run(targets_override: list[str] | None = None) -> None:
+    """Start a test run using DUT + targets from state machine.
+
+    targets_override runs those targets once without replacing the selection.
+    """
+    global retry_targets
     assert state_machine is not None
     assert test_runner is not None
 
     repo_path = state_machine.selected_repo_path
-    targets = state_machine.selected_targets
+    targets = targets_override if targets_override is not None else state_machine.selected_targets
 
     if not repo_path:
         logger.error("Cannot start test run: no repo path in state machine")
@@ -415,7 +432,12 @@ async def _start_test_run() -> None:
     )
 
     if state_machine.state == AppState.ESTOP:
+        retry_targets = []
         return  # E-stop already handled the state transition
+
+    retry_targets = (
+        list(result.progress.failed_nodeids) if result.status == RunStatus.FAILED else []
+    )
 
     if result.status == RunStatus.PASSED:
         state_machine.tests_completed(passed=True)
@@ -431,6 +453,8 @@ async def _start_test_run() -> None:
         "passed": result.progress.passed,
         "failed": result.progress.failed,
         "skipped": result.progress.skipped,
+        "errors": result.progress.errors,
+        "failed_tests": retry_targets,
         "elapsed": round(result.progress.elapsed, 1),
     })
 

@@ -43,6 +43,7 @@ class RunProgress:
     errors: int = 0
     total: int = 0
     current_test: str = ""
+    failed_nodeids: list[str] = field(default_factory=list)
     start_time: float = field(default_factory=time.monotonic)
 
     @property
@@ -366,10 +367,12 @@ class PytestRunner:
                 progress.passed += 1
             elif outcome == "failed":
                 progress.failed += 1
+                progress.failed_nodeids.append(nodeid)
             elif outcome == "skipped":
                 progress.skipped += 1
             elif outcome == "error":
                 progress.errors += 1
+                progress.failed_nodeids.append(nodeid)
         return event_type
 
     async def cancel(self) -> None:
