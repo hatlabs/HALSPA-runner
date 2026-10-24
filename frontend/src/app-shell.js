@@ -174,6 +174,11 @@ class AppShell extends LitElement {
       } else {
         this._preEstopState = null;
       }
+      if (data.state === "running" && data.old_state?.startsWith("results_")) {
+        // A retry goes straight from results to running; the previous run's
+        // results stay visible until here so a refused retry loses nothing.
+        this._resetRun();
+      }
       this.state = data.state;
       if (data.selected_dut !== undefined) {
         this.selectedDut = data.selected_dut;
@@ -233,14 +238,22 @@ class AppShell extends LitElement {
     wsClient.send({ type: "select_dut", dut: e.detail.dut });
   }
 
-  _onStartTests(e) {
-    const { dut, targets } = e.detail;
-    this._selectedTargets = targets;
+  _resetRun() {
     this.outputLines = [];
     this._currentTestStartIndex = 0;
     this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
     this.result = null;
+  }
+
+  _onStartTests(e) {
+    const { dut, targets } = e.detail;
+    this._selectedTargets = targets;
+    this._resetRun();
     wsClient.send({ type: "start", dut, targets });
+  }
+
+  _onRetryFailed() {
+    wsClient.send({ type: "retry_failed" });
   }
 
   _onSelectTargets(e) {
@@ -308,8 +321,10 @@ class AppShell extends LitElement {
           .selectedDut=${this.selectedDut}
           .result=${state.startsWith("results_") ? this.result : null}
           .finished=${state.startsWith("results_")}
+          .linkUp=${this.uiPicoConnected}
           @stop=${this._onStop}
           @dismiss=${this._onDismiss}
+          @retry-failed=${this._onRetryFailed}
         ></test-runner-screen>
       `;
     }
