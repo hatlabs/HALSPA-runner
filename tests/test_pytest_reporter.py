@@ -97,3 +97,42 @@ def test_no_env_var_is_noop(tmp_path: Path) -> None:
         capture_output=True, text=True, cwd=str(tmp_path), env=env,
     )
     assert result.returncode == 0
+
+
+def test_teardown_failure_reported_as_error(tmp_path: Path, report_file: Path) -> None:
+    _run_pytest(tmp_path, """
+import pytest
+
+@pytest.fixture
+def breaks_on_teardown():
+    yield
+    raise RuntimeError("teardown boom")
+
+def test_passes_then_teardown_fails(breaks_on_teardown):
+    pass
+
+def test_plain(): pass
+""", report_file)
+
+    results = [e for e in _parse_events(report_file) if e["event"] == "result"]
+    outcomes = [(e["nodeid"].split("::")[-1], e["outcome"]) for e in results]
+
+    assert outcomes == [("test_passes_then_teardown_fails", "error"), ("test_plain", "passed")]
+
+
+def test_call_and_teardown_failure_reported_once_as_failed(tmp_path: Path, report_file: Path) -> None:
+    _run_pytest(tmp_path, """
+import pytest
+
+@pytest.fixture
+def breaks_on_teardown():
+    yield
+    raise RuntimeError("teardown boom")
+
+def test_fails_twice(breaks_on_teardown):
+    assert False
+""", report_file)
+
+    results = [e for e in _parse_events(report_file) if e["event"] == "result"]
+
+    assert [e["outcome"] for e in results] == ["failed"]
