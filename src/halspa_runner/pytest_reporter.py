@@ -82,13 +82,13 @@ def pytest_runtest_logreport(report):
         _write_result(report.nodeid, "error")
         return
 
+    # Outcomes are held until teardown, so a test whose fixture teardown
+    # fails is reported once, as an error, like pytest counts it.
     if report.when == "setup":
         if report.skipped:
-            _write_result(report.nodeid, "skipped")
+            _call_outcomes[report.nodeid] = "skipped"
         return
 
-    # The call outcome is held until teardown, so a test whose fixture
-    # teardown fails is reported once, as an error, like pytest counts it.
     if report.when == "call":
         _call_outcomes[report.nodeid] = "skipped" if report.skipped else report.outcome
         return

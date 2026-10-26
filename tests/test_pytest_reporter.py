@@ -136,3 +136,23 @@ def test_fails_twice(breaks_on_teardown):
     results = [e for e in _parse_events(report_file) if e["event"] == "result"]
 
     assert [e["outcome"] for e in results] == ["failed"]
+
+
+def test_setup_skip_then_teardown_failure_reported_as_error(tmp_path: Path, report_file: Path) -> None:
+    _run_pytest(tmp_path, """
+import pytest
+
+@pytest.fixture
+def skips_after_registering_cleanup(request):
+    def cleanup():
+        raise RuntimeError("cleanup boom")
+    request.addfinalizer(cleanup)
+    pytest.skip("not here")
+
+def test_skipped(skips_after_registering_cleanup):
+    pass
+""", report_file)
+
+    results = [e for e in _parse_events(report_file) if e["event"] == "result"]
+
+    assert [e["outcome"] for e in results] == ["error"]
