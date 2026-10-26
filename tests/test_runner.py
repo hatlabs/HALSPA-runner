@@ -171,6 +171,44 @@ async def test_skipped_tests(runner: PytestRunner, tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_nodeids_collects_failures_and_errors_in_order(
+    runner: PytestRunner, tmp_path: Path,
+) -> None:
+    report_path = str(tmp_path / "report.jsonl")
+    report_events = [
+        {"event": "collected", "total": 4},
+        {"event": "result", "nodeid": "tests/a_test.py::test_a", "outcome": "failed"},
+        {"event": "result", "nodeid": "tests/b_test.py::test_b", "outcome": "passed"},
+        {"event": "result", "nodeid": "tests/c_test.py::test_c", "outcome": "error"},
+        {"event": "result", "nodeid": "tests/d_test.py::test_d", "outcome": "skipped"},
+    ]
+    _, patches = _setup_mock([], exit_code=1, report_path=report_path, report_events=report_events)
+
+    with patches:
+        result = await runner.run(tmp_path)
+
+    assert result.progress.failed_nodeids == [
+        "tests/a_test.py::test_a",
+        "tests/c_test.py::test_c",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_failed_nodeids_empty_when_all_pass(runner: PytestRunner, tmp_path: Path) -> None:
+    report_path = str(tmp_path / "report.jsonl")
+    report_events = [
+        {"event": "collected", "total": 1},
+        {"event": "result", "nodeid": "tests/a_test.py::test_a", "outcome": "passed"},
+    ]
+    _, patches = _setup_mock([], exit_code=0, report_path=report_path, report_events=report_events)
+
+    with patches:
+        result = await runner.run(tmp_path)
+
+    assert result.progress.failed_nodeids == []
+
+
+@pytest.mark.asyncio
 async def test_on_line_callback(runner: PytestRunner, tmp_path: Path) -> None:
     report_path = str(tmp_path / "report.jsonl")
     report_events = [

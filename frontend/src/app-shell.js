@@ -174,6 +174,11 @@ class AppShell extends LitElement {
       } else {
         this._preEstopState = null;
       }
+      if (data.state === "running" && data.old_state?.startsWith("results_")) {
+        // A retry goes straight from results to running; the previous run's
+        // results stay visible until here so a refused retry loses nothing.
+        this._resetRun();
+      }
       this.state = data.state;
       if (data.selected_dut !== undefined) {
         this.selectedDut = data.selected_dut;
@@ -221,6 +226,8 @@ class AppShell extends LitElement {
       this.uiPicoConnected = false;
     } else if (data.type === "ui_pico_connected") {
       this.uiPicoConnected = true;
+    } else if (data.type === "retry_refused") {
+      if (this.result) this.result = { ...this.result, failed_tests: [] };
     } else if (data.type === "start_refused") {
       // The link dropped between rendering the button and the click. Mark it
       // down so the banner appears and the screen releases its Starting state.
@@ -233,14 +240,22 @@ class AppShell extends LitElement {
     wsClient.send({ type: "select_dut", dut: e.detail.dut });
   }
 
-  _onStartTests(e) {
-    const { dut, targets } = e.detail;
-    this._selectedTargets = targets;
+  _resetRun() {
     this.outputLines = [];
     this._currentTestStartIndex = 0;
     this.progress = { passed: 0, failed: 0, skipped: 0, errors: 0, total: 0, current_test: "", elapsed: 0 };
     this.result = null;
+  }
+
+  _onStartTests(e) {
+    const { dut, targets } = e.detail;
+    this._selectedTargets = targets;
+    this._resetRun();
     wsClient.send({ type: "start", dut, targets });
+  }
+
+  _onRetryFailed(e) {
+    if (!wsClient.send({ type: "retry_failed" })) e.target.retrying = false;
   }
 
   _onSelectTargets(e) {
@@ -308,8 +323,10 @@ class AppShell extends LitElement {
           .selectedDut=${this.selectedDut}
           .result=${state.startsWith("results_") ? this.result : null}
           .finished=${state.startsWith("results_")}
+          .linkUp=${this.connected && this.uiPicoConnected}
           @stop=${this._onStop}
           @dismiss=${this._onDismiss}
+          @retry-failed=${this._onRetryFailed}
         ></test-runner-screen>
       `;
     }

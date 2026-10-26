@@ -11,6 +11,8 @@ class TestRunnerScreen extends LitElement {
     finished: { type: Boolean },
     autoScroll: { type: Boolean },
     stopping: { type: Boolean },
+    linkUp: { type: Boolean },
+    retrying: { type: Boolean },
   };
 
   static styles = css`
@@ -51,7 +53,7 @@ class TestRunnerScreen extends LitElement {
       font-size: 1.1rem;
       font-weight: 600;
       padding: 10px 24px;
-      min-height: 44px;
+      min-height: 48px;
     }
 
     .stop-btn.pressed {
@@ -80,11 +82,24 @@ class TestRunnerScreen extends LitElement {
       font-size: 1.1rem;
       font-weight: 600;
       padding: 10px 24px;
-      min-height: 44px;
+      min-height: 48px;
     }
 
     .done-btn.pressed {
       background: var(--accent);
+    }
+
+    .retry-btn {
+      background: var(--accent);
+      color: white;
+      font-size: 1.1rem;
+      font-weight: 600;
+      padding: 10px 24px;
+      min-height: 48px;
+    }
+
+    .retry-btn.pressed {
+      opacity: 0.8;
     }
 
     .header-right {
@@ -222,6 +237,20 @@ class TestRunnerScreen extends LitElement {
     this.finished = false;
     this.autoScroll = true;
     this.stopping = false;
+    this.linkUp = true;
+    this.retrying = false;
+  }
+
+  willUpdate(changed) {
+    // A retry that started, was refused or lost its link must not leave the
+    // button reading "Retrying…".
+    if (
+      (changed.has("finished") && !this.finished) ||
+      (changed.has("linkUp") && !this.linkUp) ||
+      changed.has("result")
+    ) {
+      this.retrying = false;
+    }
   }
 
   updated(changed) {
@@ -328,7 +357,14 @@ class TestRunnerScreen extends LitElement {
   }
 
   _dismiss() {
+    if (this.retrying) return;
     this.dispatchEvent(new CustomEvent("dismiss"));
+  }
+
+  _retryFailed() {
+    if (this.retrying || !this.linkUp) return;
+    this.retrying = true;
+    this.dispatchEvent(new CustomEvent("retry-failed"));
   }
 
   _displayLines() {
@@ -364,14 +400,14 @@ class TestRunnerScreen extends LitElement {
     const p = this.progress || {};
     const r = this.result || {};
     const passedCount = p.passed || 0;
-    const failedCount = p.failed || 0;
+    const failedCount = (p.failed || 0) + (p.errors || 0);
     const skippedCount = p.skipped || 0;
-    const errorsCount = p.errors || 0;
-    const completed = passedCount + failedCount + skippedCount + errorsCount;
+    const completed = passedCount + failedCount + skippedCount;
     const total = p.total || 0;
     const progressText = total > 0 ? `${completed} / ${total}` : completed > 0 ? `${completed} / ?` : "";
 
-    const passed = this.finished && (r.status === "passed" || ((r.failed || 0) === 0 && (r.passed || 0) > 0));
+    const passed = this.finished && r.status === "passed";
+    const retryCount = (r.failed_tests || []).length;
 
     return html`
       <header>
@@ -385,8 +421,19 @@ class TestRunnerScreen extends LitElement {
           ${this.finished
             ? html`
                 <span class="result-badge ${passed ? "pass" : "fail"}">${passed ? "PASS" : "FAIL"}</span>
+                ${retryCount > 0
+                  ? html`<button
+                      class="retry-btn"
+                      ?disabled=${this.retrying || !this.linkUp}
+                      @pointerdown=${TouchFeedback.onPress}
+                      @pointerup=${TouchFeedback.onRelease}
+                      @pointerleave=${TouchFeedback.onRelease}
+                      @click=${this._retryFailed}
+                    >${this.retrying ? "Retrying…" : `Retry failed (${retryCount})`}</button>`
+                  : null}
                 <button
                   class="done-btn"
+                  ?disabled=${this.retrying}
                   @pointerdown=${TouchFeedback.onPress}
                   @pointerup=${TouchFeedback.onRelease}
                   @pointerleave=${TouchFeedback.onRelease}

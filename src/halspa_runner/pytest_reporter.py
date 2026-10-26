@@ -15,6 +15,7 @@ import json
 import os
 
 _report_file = None
+_call_outcomes: dict[str, str] = {}
 
 
 def pytest_configure(config):
@@ -81,15 +82,20 @@ def pytest_runtest_logreport(report):
         _write_result(report.nodeid, "error")
         return
 
-    # Skipped tests are reported during setup (skip marker) or call (skip()).
-    if report.skipped:
-        # Only report once: setup phase for marker skips, call phase for skip().
-        if report.when in ("setup", "call"):
-            _write_result(report.nodeid, "skipped")
+    # Outcomes are held until teardown, so a test whose fixture teardown
+    # fails is reported once, as an error, like pytest counts it.
+    if report.when == "setup":
+        if report.skipped:
+            _call_outcomes[report.nodeid] = "skipped"
         return
 
-    # Only report the call phase for normal results.
-    if report.when != "call":
+    if report.when == "call":
+        _call_outcomes[report.nodeid] = "skipped" if report.skipped else report.outcome
         return
 
-    _write_result(report.nodeid, report.outcome)
+    outcome = _call_outcomes.pop(report.nodeid, None)
+    if outcome is None:
+        return
+    if report.failed and outcome != "failed":
+        outcome = "error"
+    _write_result(report.nodeid, outcome)
