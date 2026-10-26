@@ -1,7 +1,9 @@
 """Tests for the FastAPI app endpoints."""
 
+from collections.abc import Coroutine
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -377,9 +379,12 @@ _FAILED_A = "tests/100_power/101_power_test.py::test_5v"
 _FAILED_B = "tests/300_canbus/302_canbus_rx_tx_test.py::test_rx"
 
 
-def _run_result(status: RunStatus, failed_nodeids: list[str], errors: int = 0) -> RunResult:
+def _run_result(
+    status: RunStatus, failed_nodeids: list[str], errors: int = 0, unreported: int = 0,
+) -> RunResult:
     progress = RunProgress(
-        passed=1, failed=len(failed_nodeids) - errors, errors=errors, total=1 + len(failed_nodeids),
+        passed=1, failed=len(failed_nodeids) - errors, errors=errors,
+        total=1 + len(failed_nodeids) + unreported,
     )
     progress.failed_nodeids = list(failed_nodeids)
     return RunResult(status=status, progress=progress, exit_code=0 if status == RunStatus.PASSED else 1)
@@ -392,12 +397,12 @@ def selected(mock_state: StateMachine) -> StateMachine:
     return mock_state
 
 
-async def _run_and_capture(**kwargs) -> list[dict]:
+async def _capture(coro: Coroutine[Any, Any, None]) -> list[dict]:
     sent: list[dict] = []
     with patch.object(
         app_module.ws_manager, "broadcast", new=AsyncMock(side_effect=lambda m: sent.append(m)),
     ):
-        await app_module._start_test_run(**kwargs)
+        await coro
     return sent
 
 
@@ -408,7 +413,7 @@ async def test_failed_run_reports_failed_tests_and_errors(
         return_value=_run_result(RunStatus.FAILED, [_FAILED_A, _FAILED_B], errors=1),
     )
 
-    sent = await _run_and_capture()
+    sent = await _capture(app_module._start_test_run())
 
     complete = sent[-1]
     assert complete["type"] == "test_complete"
@@ -424,10 +429,10 @@ async def test_only_a_failed_run_offers_a_retry(
 ) -> None:
     mock_runner.run = AsyncMock(return_value=_run_result(status, [_FAILED_A]))
 
-    sent = await _run_and_capture()
+    sent = await _capture(app_module._start_test_run())
     assert sent[-1]["failed_tests"] == []
 
-    await _run_and_capture_retry()
+    await _capture(app_module._retry_failed())
     assert mock_runner.run.await_count == 1
 
 
@@ -437,18 +442,20 @@ async def test_failed_run_without_recorded_failures_offers_no_retry(
     """A collection error fails the run without any per-test result."""
     mock_runner.run = AsyncMock(return_value=_run_result(RunStatus.FAILED, []))
 
-    sent = await _run_and_capture()
+    sent = await _capture(app_module._start_test_run())
 
     assert sent[-1]["failed_tests"] == []
 
 
-async def _run_and_capture_retry() -> list[dict]:
-    sent: list[dict] = []
-    with patch.object(
-        app_module.ws_manager, "broadcast", new=AsyncMock(side_effect=lambda m: sent.append(m)),
-    ):
-        await app_module._retry_failed()
-    return sent
+async def test_run_with_unreported_tests_offers_no_retry(
+    client: TestClient, mock_runner: MagicMock, selected: StateMachine,
+) -> None:
+    """Tests that never reported, e.g. after pytest crashed, may not have passed."""
+    mock_runner.run = AsyncMock(return_value=_run_result(RunStatus.FAILED, [_FAILED_A], unreported=1))
+
+    sent = await _capture(app_module._start_test_run())
+
+    assert sent[-1]["failed_tests"] == []
 
 
 async def test_retry_runs_only_the_failed_tests_and_keeps_the_selection(
@@ -457,9 +464,9 @@ async def test_retry_runs_only_the_failed_tests_and_keeps_the_selection(
     mock_runner.run = AsyncMock(
         return_value=_run_result(RunStatus.FAILED, [_FAILED_A, _FAILED_B]),
     )
-    await _run_and_capture()
+    await _capture(app_module._start_test_run())
 
-    await _run_and_capture_retry()
+    await _capture(app_module._retry_failed())
 
     assert mock_runner.run.await_args.kwargs["targets"] == [_FAILED_A, _FAILED_B]
     assert selected.selected_targets == ["tests/100_power", "tests/300_canbus"]
@@ -473,12 +480,12 @@ async def test_a_failing_retry_offers_its_own_failures(
         _run_result(RunStatus.FAILED, [_FAILED_B]),
         _run_result(RunStatus.PASSED, []),
     ])
-    await _run_and_capture()
+    await _capture(app_module._start_test_run())
 
-    sent = await _run_and_capture_retry()
+    sent = await _capture(app_module._retry_failed())
     assert sent[-1]["failed_tests"] == [_FAILED_B]
 
-    await _run_and_capture_retry()
+    await _capture(app_module._retry_failed())
     assert mock_runner.run.await_args.kwargs["targets"] == [_FAILED_B]
     assert selected.state == AppState.RESULTS_PASS
 
@@ -486,40 +493,61 @@ async def test_a_failing_retry_offers_its_own_failures(
 async def test_estop_during_a_run_offers_no_retry(
     client: TestClient, mock_runner: MagicMock, selected: StateMachine,
 ) -> None:
-    async def run_interrupted_by_estop(*args, **kwargs) -> RunResult:
+    async def retry_interrupted_by_estop(*args, **kwargs) -> RunResult:
         selected.transition(AppState.ESTOP)
         return _run_result(RunStatus.CANCELLED, [_FAILED_A])
 
-    mock_runner.run = AsyncMock(side_effect=run_interrupted_by_estop)
-    await _run_and_capture()
-    selected.transition(AppState.RESULTS_FAIL)
+    mock_runner.run = AsyncMock(return_value=_run_result(RunStatus.FAILED, [_FAILED_A]))
+    await _capture(app_module._start_test_run())
+    mock_runner.run.side_effect = retry_interrupted_by_estop
+    await _capture(app_module._retry_failed())
+    selected.transition(AppState.RESULTS_FAIL)  # as the e-stop auto-clear would
 
-    await _run_and_capture_retry()
+    await _capture(app_module._retry_failed())
 
-    assert mock_runner.run.await_count == 1
+    assert mock_runner.run.await_count == 2
 
 
-@pytest.mark.parametrize("state", [AppState.IDLE, AppState.DUT_SELECTED, AppState.RESULTS_PASS])
+@pytest.mark.parametrize("state", [AppState.IDLE, AppState.DUT_SELECTED, AppState.RESULTS_PASS, AppState.RUNNING])
 async def test_retry_ignored_outside_failed_results(
     client: TestClient, mock_runner: MagicMock, selected: StateMachine, state: AppState,
 ) -> None:
     mock_runner.run = AsyncMock(return_value=_run_result(RunStatus.FAILED, [_FAILED_A]))
-    await _run_and_capture()
+    await _capture(app_module._start_test_run())
     selected.transition(state)
 
-    await _run_and_capture_retry()
+    sent = await _capture(app_module._retry_failed())
 
     assert mock_runner.run.await_count == 1
+    assert sent == [{"type": "retry_refused"}]
+
+
+async def test_no_retry_while_a_run_is_returning(
+    client: TestClient, mock_runner: MagicMock, selected: StateMachine,
+) -> None:
+    """The e-stop auto-clear can reach results before the cancelled run returns."""
+    async def run_cleared_to_results_early(*args, **kwargs) -> RunResult:
+        selected.transition(AppState.RESULTS_FAIL)
+        await app_module._retry_failed()
+        return _run_result(RunStatus.CANCELLED, [])
+
+    mock_runner.run = AsyncMock(return_value=_run_result(RunStatus.FAILED, [_FAILED_A]))
+    await _capture(app_module._start_test_run())
+    mock_runner.run.side_effect = run_cleared_to_results_early
+
+    await _capture(app_module._retry_failed())
+
+    assert mock_runner.run.await_count == 2
 
 
 async def test_retry_refused_when_the_ui_pico_link_is_down(
     client: TestClient, mock_runner: MagicMock, mock_serial: MagicMock, selected: StateMachine,
 ) -> None:
     mock_runner.run = AsyncMock(return_value=_run_result(RunStatus.FAILED, [_FAILED_A]))
-    await _run_and_capture()
+    await _capture(app_module._start_test_run())
     mock_serial.ui_pico_connected = False
 
-    sent = await _run_and_capture_retry()
+    sent = await _capture(app_module._retry_failed())
 
     assert sent[-1]["type"] == "start_refused"
     assert mock_runner.run.await_count == 1
@@ -530,8 +558,8 @@ async def test_start_button_after_a_retry_runs_the_original_selection(
     client: TestClient, mock_runner: MagicMock, selected: StateMachine,
 ) -> None:
     mock_runner.run = AsyncMock(return_value=_run_result(RunStatus.FAILED, [_FAILED_A]))
-    await _run_and_capture()
-    await _run_and_capture_retry()
+    await _capture(app_module._start_test_run())
+    await _capture(app_module._retry_failed())
 
     with patch.object(app_module.ws_manager, "broadcast", new=AsyncMock()):
         await app_module._handle_button("BUTTON_START")

@@ -367,6 +367,8 @@ async def _retry_failed() -> None:
     """Rerun the tests that failed in the last run, leaving the selection as is."""
     assert state_machine is not None
     if state_machine.state != AppState.RESULTS_FAIL or not retry_targets:
+        # Lets a client showing a stale retry offer drop it instead of waiting.
+        await ws_manager.broadcast({"type": "retry_refused"})
         return
     await _start_test_run(targets_override=list(retry_targets))
 
@@ -406,6 +408,7 @@ async def _start_test_run(targets_override: list[str] | None = None) -> None:
         return
 
     state_machine.start_running()
+    retry_targets = []
 
     async def on_line(line: str) -> None:
         await ws_manager.broadcast({"type": "test_output", "line": line})
@@ -432,12 +435,14 @@ async def _start_test_run(targets_override: list[str] | None = None) -> None:
     )
 
     if state_machine.state == AppState.ESTOP:
-        retry_targets = []
         return  # E-stop already handled the state transition
 
-    retry_targets = (
-        list(result.progress.failed_nodeids) if result.status == RunStatus.FAILED else []
-    )
+    # A retry that passes must mean the whole selection passed, so offer one
+    # only when every collected test reported a result.
+    p = result.progress
+    every_test_reported = p.passed + p.failed + p.skipped + p.errors == p.total
+    if result.status == RunStatus.FAILED and every_test_reported:
+        retry_targets = list(p.failed_nodeids)
 
     if result.status == RunStatus.PASSED:
         state_machine.tests_completed(passed=True)
