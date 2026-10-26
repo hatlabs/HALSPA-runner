@@ -226,6 +226,8 @@ class AppShell extends LitElement {
       this.uiPicoConnected = false;
     } else if (data.type === "ui_pico_connected") {
       this.uiPicoConnected = true;
+    } else if (data.type === "retry_refused") {
+      if (this.result) this.result = { ...this.result, failed_tests: [] };
     } else if (data.type === "start_refused") {
       // The link dropped between rendering the button and the click. Mark it
       // down so the banner appears and the screen releases its Starting state.
@@ -252,8 +254,8 @@ class AppShell extends LitElement {
     wsClient.send({ type: "start", dut, targets });
   }
 
-  _onRetryFailed() {
-    wsClient.send({ type: "retry_failed" });
+  _onRetryFailed(e) {
+    if (!wsClient.send({ type: "retry_failed" })) e.target.retrying = false;
   }
 
   _onSelectTargets(e) {
@@ -321,7 +323,7 @@ class AppShell extends LitElement {
           .selectedDut=${this.selectedDut}
           .result=${state.startsWith("results_") ? this.result : null}
           .finished=${state.startsWith("results_")}
-          .linkUp=${this.uiPicoConnected}
+          .linkUp=${this.connected && this.uiPicoConnected}
           @stop=${this._onStop}
           @dismiss=${this._onDismiss}
           @retry-failed=${this._onRetryFailed}

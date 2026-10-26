@@ -53,7 +53,7 @@ class TestRunnerScreen extends LitElement {
       font-size: 1.1rem;
       font-weight: 600;
       padding: 10px 24px;
-      min-height: 44px;
+      min-height: 48px;
     }
 
     .stop-btn.pressed {
@@ -82,7 +82,7 @@ class TestRunnerScreen extends LitElement {
       font-size: 1.1rem;
       font-weight: 600;
       padding: 10px 24px;
-      min-height: 44px;
+      min-height: 48px;
     }
 
     .done-btn.pressed {
@@ -95,7 +95,7 @@ class TestRunnerScreen extends LitElement {
       font-size: 1.1rem;
       font-weight: 600;
       padding: 10px 24px;
-      min-height: 44px;
+      min-height: 48px;
     }
 
     .retry-btn.pressed {
@@ -242,11 +242,13 @@ class TestRunnerScreen extends LitElement {
   }
 
   willUpdate(changed) {
-    if (changed.has("finished") && !this.finished) {
-      this.retrying = false;
-    }
-    if (changed.has("linkUp") && !this.linkUp) {
-      // A retry refused mid-click must not leave the button reading "Retrying…".
+    // A retry that started, was refused or lost its link must not leave the
+    // button reading "Retrying…".
+    if (
+      (changed.has("finished") && !this.finished) ||
+      (changed.has("linkUp") && !this.linkUp) ||
+      changed.has("result")
+    ) {
       this.retrying = false;
     }
   }

@@ -75,9 +75,9 @@ All settings via environment variables:
 
 ### WebSocket (`/ws`)
 
-Bidirectional JSON messages. Server sends: `state_change`, `test_output`, `test_progress`, `test_complete`. Client sends: `start`, `stop`, `estop`, `clear_estop`, `dismiss`, `retry_failed`.
+Bidirectional JSON messages. Server sends: `state_change`, `test_output`, `test_progress`, `test_complete`, `retry_refused`. Client sends: `start`, `stop`, `estop`, `clear_estop`, `dismiss`, `retry_failed`.
 
-`test_complete` carries `failed_tests`, the node IDs that failed or errored, non-empty only after a run with status `failed`. `retry_failed` reruns exactly those, from `results_fail` only, without changing the selected targets: Done and the START button still run the original selection.
+`test_complete` carries `failed_tests`, the node IDs that failed or errored (a teardown failure counts as an error). It is non-empty only after a run with status `failed` in which every collected test reported a result, so a passing retry means the whole selection passed. `retry_failed` reruns exactly those, from `results_fail` only, without changing the selected targets: Done and the START button still run the original selection. A `retry_failed` that cannot run is answered with `retry_refused`.
 
 ## Rendering the UI
 
@@ -88,10 +88,12 @@ The frontend renders without the backend or the jig. Serve it and drive its stat
 cd frontend && npx vite --port 5199
 ```
 
-Open `http://localhost:5199/` at 1280x720 (the kiosk panel in landscape). The "Disconnected" badge and the WebSocket and `/api/duts` console errors are expected with no backend. In the browser console:
+Open `http://localhost:5199/` at 1280x720 (the kiosk panel in landscape). The WebSocket and `/api/duts` console errors are expected with no backend. In the browser console:
 
 ```js
 const shell = document.querySelector("app-shell");
+window.removeEventListener("ws-disconnected", shell._boundOnDisconnected);
+shell.connected = true;  // Retry is disabled while the socket is down; drop this for the "Disconnected" badge
 const send = (d) => shell._onMessage({ detail: d });
 const sc = (state, old_state) => send({ type: "state_change", state, old_state, selected_dut: "HALPI2", ui_pico_connected: true });
 sc("dut_selected", "idle");
@@ -105,6 +107,6 @@ send({ type: "test_complete", status: "failed", passed: 11, failed: 1, skipped: 
 Other states from there:
 
 - Not retryable (cancelled, timeout, e-stop): `test_complete` with `failed_tests: []`.
-- Retry pending: press "Retry failed"; refused: `send({ type: "start_refused", reason: "ui_pico_disconnected" })`; link back: `send({ type: "ui_pico_connected" })`.
+- Retry pending: press "Retry failed" (with no backend the send fails and the button resets; to keep it pending, first run `(await import("/src/ws-client.js")).wsClient.send = () => true`). Refused for the link: `send({ type: "start_refused", reason: "ui_pico_disconnected" })`; link back: `send({ type: "ui_pico_connected" })`. Refused as stale: `send({ type: "retry_refused" })`.
 - Retry started: `sc("running", "results_fail")`. Passed: `sc("results_pass", "running")` and `test_complete` with `status: "passed"`.
 - E-stop modal: `sc("estop", "running")`.
